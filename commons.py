@@ -48,9 +48,8 @@ USERS = focus_on(USERS,'name')
 DATAPATH = 'data'
 
 LB_API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbGdkZThvaGEwYmcxMDcxeGI3eXkyaGxyIiwib3JnYW5pemF0aW9uSWQiOiJjbGdkZThvZ3gwYmcwMDcxeGYydGwzeDl1IiwiYXBpS2V5SWQiOiJjbGdldGQyeW8xM3I0MDd3ZDhkbWc3ZGpmIiwic2VjcmV0IjoiMjc4YTAwZmQwNDkzOGRjMjRkYzdkMDVjODY3NjcxZDgiLCJpYXQiOjE2ODEzNzE4MDksImV4cCI6MjMxMjUyMzgwOX0.D4McllRdFhPUDo7WJBZJLEMPVTX8uX3mEeACWbozmas'
-LB_PROJECTS = ['clo7mc56c057507yzbjsgf979','clo7mckef055c071oc9qd98qt','clo7metbw0blp07yp004dfg50']
+LB_PROJECTS = ['clor9ct3x09k107ybfmc47dkt','clor9fbsf056a07yg53w31ui0','clor9j037056607xrcgz3faki']
 
-
-LSKEY = '0272f4ea5b7a6f6d1567943b9c3ec79a91b66cd0'
+LSKEY = ']0272f4ea5b7a6f6d1567943b9c3ec79a91b66cd0'
 LS_AUTH_HEADER = {'Authorization': f'Token {LSKEY}'}
 LS_SERVER = 'http://lfcs.ii.metu.edu.tr:8080'
