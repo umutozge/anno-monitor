@@ -42,6 +42,9 @@ class DialogAnnotation():
         self.data_reader.read_data(dialog.project_id, update=True)
         self.load_projects()
 
+    def update_all(self):
+        self.laod_projects(update=True)
+
     def get_dialog(self, key, value):
         return self.dialogs.loc[lambda df: df[key] == value, 'object'].values[0]
 
@@ -70,16 +73,18 @@ class Dialog():
                             list([Label(self, lb_label)
                                 for lb_label in
                                 list(lb_datarow['projects'].items())[0][1]['labels'] ]))
-        self.agreement = Agreement(self) if self.labels else None
-        self.indexed_text = self.generate_indexed_text()
-        self.write_to_disk()
-        logger.info(f'Formed {self}')
+
+        if self:
+            self.agreement = Agreement(self) if self.labels else None
+            self.indexed_text = self.generate_indexed_text()
+            self.write_to_disk()
+            logger.info(f'Formed {self}')
 
     def __repr__(self):
         return f"Dialog({self.name}, {self.project_id}, {self.datarow_id}, {len(self.labels)})"
 
     def __bool__(self):
-        return bool(self.labels)
+        return bool(self.labels is not None)
 
     def write_to_disk(self):
         with open(os.path.join(self.owner.datapath,f"{self.datarow_id}-{self.name}.json"), 'w', encoding='utf-8') as ouf:

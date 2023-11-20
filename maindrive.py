@@ -23,7 +23,7 @@ class Monitor():
                        layout="wide",
                        initial_sidebar_state="expanded")
 
-        st.session_state.dialog_names = [dialog.get_name() for dialog in self.da.get_dialogs()['object'].to_list()]
+        st.session_state.dialog_names = sorted([dialog.get_name() for dialog in self.da.get_dialogs()['object'].to_list()])
 
         st.sidebar.title('Dialogs')
         st.sidebar.selectbox("Select a dialog",
