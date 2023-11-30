@@ -1,18 +1,21 @@
-import sys
 import os
 import re
 import json
 import pandas as pd
 import streamlit as st
 
-# this is put in chain branch
-
 
 from commons import LB_PROJECTS
 from entities import DialogAnnotation
 
 import logging
-logging.basicConfig(filename='logfile.log', encoding='utf-8', level=logging.INFO)
+logging.basicConfig(
+    filename='logfile.log',
+    encoding='utf-8',
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)-8s %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
 
@@ -26,8 +29,9 @@ class Monitor():
                        layout="wide",
                        initial_sidebar_state="expanded")
 
-        st.session_state.dialog_names = sorted([dialog.get_name() for dialog in self.da.get_dialogs()['object'].to_list()])
+        st.session_state.dialog_names = sorted([dialog.name for dialog in self.da.dialogs['object'].to_list()])
 
+        st.sidebar.title('DEVELOPMENT VERSION')
         st.sidebar.title('Dialogs')
         st.sidebar.selectbox("Select a dialog",
                      key="dialog_name",
@@ -65,25 +69,25 @@ class Monitor():
         dialog_name = st.session_state.dialog_name
         if dialog_name:
             dialog = self.da.get_dialog('name', dialog_name)
-            agreement = dialog.get_agreement()
+            agreement = dialog.agreement
 
             st.markdown(
                 f"""
-                Dialog: {dialog.get_name()}  
-                Labelers: {', '.join(dialog.get_labelers())}  
+                Dialog: {dialog.name}  
+                Labelers: {', '.join(dialog.labelers)}  
                 """)
 
             col1, col2 = st.columns(2)
             with col1:
-                self.display_df(lambda x: f"Matched spans ({len(x)}):", agreement.get_matched_spans())
-                self.display_df(lambda x: f"Disagreed relations ({len(x)}):", agreement.get_disagreed_relations())
+                self.display_df(lambda x: f"Matched spans ({len(x)}):", agreement.matched_spans)
+                self.display_df(lambda x: f"Disagreed relations ({len(x)}):", agreement.disagreed_relations)
 
             with col2:
-                self.display_df(lambda x: f"Unmatched spans ({len(x)}):", agreement.get_unmatched_spans())
-                self.display_df(lambda x: f"Unmatched relations ({len(x)}):", agreement.get_unmatched_relations())
+                self.display_df(lambda x: f"Unmatched spans ({len(x)}):", agreement.unmatched_spans)
+                self.display_df(lambda x: f"Unmatched relations ({len(x)}):", agreement.unmatched_relations)
 
             st.markdown("Text:  ")
-            st.markdown(dialog.get_indexed_text(), unsafe_allow_html=True)
+            st.markdown(dialog.indexed_text, unsafe_allow_html=True)
 
 if __name__ == '__main__':
 

@@ -8,6 +8,13 @@ import json
 
 import logging
 
+logging.basicConfig(
+    filename='logfile.log',
+    encoding='utf-8',
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)-8s %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
 
