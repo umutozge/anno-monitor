@@ -113,6 +113,7 @@ class Dialog():
                                  [{'id': span['feature_id'],
                                    'start': span['location']['start'],
                                    'end': span['location']['end'],
+                                   'tag': span['name'],
                                    'labeler': USERS[lb_label['label_details']['created_by']]}
                                   for span in lb_label['annotations']['objects']]
                                  for lb_label in lb_labels]))
@@ -157,9 +158,7 @@ class Dialog():
                  .drop('from', axis=1)
                  .rename({'fro':'from'}, axis=1)
                  .pipe(lambda df: df.loc[:,['from','to','tag','labeler']])
-#                 .pipe(lambda df: print(df) or df)
                  .pipe(lambda df: df.loc[~((df['from'] == -1) | (df['to'] == -1)),:])
-#                 .pipe(lambda df: print(df) or df)
                 )
 
 
@@ -209,20 +208,38 @@ class Agreement():
 
         self.matched_spans = self._compute_matched_spans()
         self.unmatched_spans = self._compute_unmatched_spans()
+        self.disagreed_spans = self._compute_disagreed_spans()
         self.disagreed_relations = self._compute_disagreed_relations()
+        self.matched_relations = self._compute_matched_relations()
         self.unmatched_relations = self._compute_unmatched_relations()
+        self.summary = self._compute_summary()
 
-    def _compute_disagreed_relations(self):
+
+    def _compute_summary(self):
+
+        return (pd.DataFrame(
+            {'spans':
+             {'matched': len(self.matched_spans),
+              'unmatched': len(self.unmatched_spans),
+              'disagreed': len(self.disagreed_spans)},
+             'relations':
+             {'matched': len(self.matched_relations),
+              'unmatched':len(self.unmatched_relations),
+              'disagreed':len(self.disagreed_relations) }})
+            .pipe(lambda df: pd.concat([df,pd.DataFrame([df.sum()], index=['total'])]))
+            .assign(spans_p = lambda df: df.apply(lambda row: f"{round(row['spans']/df.at['total','spans'] * 100)}%", axis=1),
+             relations_p = lambda df: df.apply(lambda row: f"{round(row['relations']/df.at['total','relations'] * 100)}%", axis=1))
+            .pipe(lambda df: df.iloc[:,[0,2,1,3]])
+        )
+
+
+    def _compute_matched_relations(self):
         relations = self.relations.groupby('labeler')
         left, right = [relations.get_group(labeler) for labeler in self.labelers]
 
         return (pd.merge(left,right,
-                         on=['from','to'],
-                         how='inner',
-                         suffixes=[f'_{l}' for l in self.labelers])
-                .query(f'tag_{self.labelers[0]} != tag_{self.labelers[1]}')
-                .sort_values(by="from")
-                .pipe(lambda df: df.drop(columns=[column for column in df.columns if column.startswith('labeler')]))
+                         on=['from','to','tag'])
+                .loc[:,['from','to','tag']]
                 .reset_index(drop=True)
                )
 
@@ -246,12 +263,27 @@ class Agreement():
                 .reset_index(drop=True)
                )
 
+    def _compute_disagreed_relations(self):
+        relations = self.relations.groupby('labeler')
+        left, right = [relations.get_group(labeler) for labeler in self.labelers]
+
+        return (pd.merge(left,right,
+                         on=['from','to'],
+                         how='inner',
+                         suffixes=[f'_{l}' for l in self.labelers])
+                .query(f'tag_{self.labelers[0]} != tag_{self.labelers[1]}')
+                .sort_values(by="from")
+                .pipe(lambda df: df.drop(columns=[column for column in df.columns if column.startswith('labeler')]))
+                .reset_index(drop=True)
+               )
+
+
     def _compute_matched_spans(self):
 
         labels = self.spans.groupby('labeler')
         left, right = [labels.get_group(labeler) for labeler in self.labelers]
 
-        return (pd.merge(left,right, on='id', how='inner')
+        return (pd.merge(left,right, on=['id','tag'], how='inner')
                 .sort_values(by="id")
                 .rename(columns={'start_x':'start','end_x':'end','text_x':'text'})
                 .pipe(lambda df:
@@ -285,5 +317,21 @@ class Agreement():
                     lambda df: self.labelers[0] if np.isnan(df[f'start_{self.labelers[1]}']) else self.labelers[1],
                     axis='columns'))
                 .pipe(lambda df: df.drop(columns = [column for column in df.columns if '_' in column]) )
+                .reset_index(drop=True)
+               )
+
+    def _compute_disagreed_spans(self):
+
+        labels = self.spans.groupby('labeler')
+        left, right = [labels.get_group(labeler) for labeler in self.labelers]
+
+        return (pd.merge(left,right,
+                         on='id',
+                         how='inner',
+                         suffixes=[f'_{l}' for l in self.labelers])
+                .query(f'tag_{self.labelers[0]} != tag_{self.labelers[1]}')
+                .sort_values(by="id")
+                .rename(columns={'start'+self.labelers[0]: 'start', 'end'+self.labelers[0]: 'end', 'text'+self.labelers[0]:'text'})
+                .pipe(lambda df: df.drop(columns=[column for column in df.columns if '_' in column and not column.startswith('tag')]))
                 .reset_index(drop=True)
                )

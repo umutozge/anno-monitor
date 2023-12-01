@@ -46,12 +46,10 @@ class Monitor():
                       type="primary",
                       on_click=self.update_dialog)
 
-        self.col1, self.col2 = st.columns(2)
-
-    def display_df(self, caption, df):
+    def display_df(self, caption, df, hide_index=True):
 
         st.markdown(caption(df))
-        st.dataframe(df, hide_index=True)
+        st.dataframe(df, hide_index=hide_index)
 
     def update_dialog(self):
 
@@ -77,14 +75,20 @@ class Monitor():
                 Labelers: {', '.join(dialog.labelers)}  
                 """)
 
-            col1, col2 = st.columns(2)
+            self.display_df(lambda x: "Summary:",agreement.summary, hide_index=False)
+
+            col1, col2, col3 = st.columns(3)
             with col1:
                 self.display_df(lambda x: f"Matched spans ({len(x)}):", agreement.matched_spans)
-                self.display_df(lambda x: f"Disagreed relations ({len(x)}):", agreement.disagreed_relations)
+                self.display_df(lambda x: f"Matched relations ({len(x)}):", agreement.matched_relations)
 
             with col2:
                 self.display_df(lambda x: f"Unmatched spans ({len(x)}):", agreement.unmatched_spans)
                 self.display_df(lambda x: f"Unmatched relations ({len(x)}):", agreement.unmatched_relations)
+
+            with col3:
+                self.display_df(lambda x: f"Disagreed spans ({len(x)}):", agreement.disagreed_spans)
+                self.display_df(lambda x: f"Disagreed relations ({len(x)}):", agreement.disagreed_relations)
 
             st.markdown("Text:  ")
             st.markdown(dialog.indexed_text, unsafe_allow_html=True)
