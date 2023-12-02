@@ -5,6 +5,8 @@ import sys
 import json
 import time
 
+
+
 from functools import reduce
 
 from commons import USERS, LB_API_KEY, DATAPATH, LB_PROJECTS, make_color_picker
@@ -20,7 +22,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class DialogAnnotation():
+class DialogAnnotation:
 
     def __init__(self, list_of_projects=LB_PROJECTS, data_reader=LBWorker(LB_API_KEY, DATAPATH), datapath=DATAPATH):
 
@@ -62,7 +64,7 @@ class DialogAnnotation():
     def __bool__(self):
         return bool(len(self))
 
-class Dialog():
+class Dialog:
 
     def __init__(self, lb_datarow, owner):
 
@@ -77,13 +79,14 @@ class Dialog():
 
         self.organize_data()
 
-
         if self:
             self.labelers = list(self.spans.loc[:,'labeler'].unique())
             self.agreement = Agreement(self)
             self.indexed_text = self.generate_indexed_text()
             self.write_to_disk()
             logger.info(f'Formed {self}')
+
+        self.entity_grid=EntityGrid(self)
 
     def __repr__(self):
         return f"Dialog({self.name}, {self.project_id}, {self.datarow_id})"
@@ -199,7 +202,7 @@ class Dialog():
         accu = accu.replace('p:','p: ').replace('o:','o: ').replace('\n','\n<br/>')
         return accu
 
-class Agreement():
+class Agreement:
 
     def __init__(self, dialog):
 
@@ -287,3 +290,81 @@ class Agreement():
                 .pipe(lambda df: df.drop(columns = [column for column in df.columns if '_' in column]) )
                 .reset_index(drop=True)
                )
+
+class EntityGrid:
+
+    from trtokenizer.tr_tokenizer import SentenceTokenizer
+    sentence_tokenizer=SentenceTokenizer()
+
+    def __init__(self, dialog):
+
+        self.dialog = dialog
+        self.sentences =[Sentence(*sent)
+                         for sent in
+                         list(
+                             map(lambda x: (x[0],x[1][0],x[1][1],x[1][2]),
+                                 enumerate(
+                                     list(
+                                         reduce(lambda x,y:
+                                                x + [(x[-1][1]+1,x[-1][1]+len(y)+1,y)],
+                                                self.sentence_tokenizer.tokenize(dialog.text),
+                                                [(0,0,'')]))[1:])
+                                )
+                         )
+                        ]
+
+        self.set_speakers()
+
+        [print(x) or x for x in self.sentences]
+
+    def to_dataframe(self):
+
+        return pd.DataFrame(
+            [{'id': sent.index,
+              'start': sent.start,
+              'end': sent.end,
+              'text': sent.text,
+              'speaker': sent.speaker}
+             for sent in self.sentences]
+        )
+
+
+    def set_speakers(self):
+
+        current = 'anchor'
+
+        for sent in self.sentences:
+
+            if sent.text.startswith('p:'):
+                current='presenter'
+            elif sent.text.startswith('o:'):
+                current='operator'
+
+            sent.set_speaker(current)
+
+class Sentence:
+
+    def __init__(self, index, start, end, text):
+
+        for field in ['index','start','end','text']:
+            exec(f'self.{field} = {field}')
+
+            self.speaker = None
+
+    def __repr__(self):
+        return f'Sentence({self.index},({self.start},{self.end}), {self.text}, {self.speaker})'
+
+    def set_speaker(self, speaker):
+        self.speaker=speaker
+
+class Mention:
+
+    def __init__(self):
+
+        self.form = None
+        self.text = None
+        self.start = None
+        self.end = None
+        self.prec = None
+        self.succ = None
+        self.sentence = None

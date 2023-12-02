@@ -42,9 +42,15 @@ class Monitor():
 
         st.sidebar.divider()
         st.sidebar.button("update",
-                      help="update the last viewed project",
+                      help="update the last viewed dialog",
                       type="primary",
                       on_click=self.update_dialog)
+
+        st.sidebar.divider()
+        st.sidebar.button("analyze",
+                      help="analyze the last viewed dialog",
+                      type="primary",
+                      on_click=self.analyze_dialog)
 
         self.col1, self.col2 = st.columns(2)
 
@@ -62,6 +68,14 @@ class Monitor():
             self.display_dialog()
         else:
             st.warning('Please select a dialog.', icon='😄')
+
+    def analyze_dialog(self):
+
+        dialog_name = st.session_state.dialog_name
+        if dialog_name:
+            dialog = self.da.get_dialog('name', dialog_name)
+            self.display_df(lambda x:'Sentences:', dialog.entity_grid.to_dataframe())
+
 
     def display_dialog(self):
 
