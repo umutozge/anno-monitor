@@ -36,21 +36,21 @@ class Monitor():
         st.sidebar.selectbox("Select a dialog",
                      key="dialog_name",
                      index=0,
-                     options=pd.Series([''] + st.session_state.dialog_names),
-                     on_change=self.display_dialog)
+                     options=pd.Series([''] + st.session_state.dialog_names)
+                     )
 
 
         st.sidebar.divider()
+
+        st.sidebar.button("view annotation",
+                      help="annotations of the last viewed dialog",
+                      on_click=self.display_dialog)
+        st.sidebar.button("view analysis",
+                      help="analysis of the last viewed dialog",
+                      on_click=self.analyze_dialog)
         st.sidebar.button("update",
                       help="update the last viewed dialog",
-                      type="primary",
                       on_click=self.update_dialog)
-
-        st.sidebar.divider()
-        st.sidebar.button("analyze",
-                      help="analyze the last viewed dialog",
-                      type="primary",
-                      on_click=self.analyze_dialog)
 
 
     def display_df(self, caption, df, hide_index=True):

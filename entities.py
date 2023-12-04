@@ -84,9 +84,8 @@ class Dialog:
             self.agreement = Agreement(self)
             self.indexed_text = self.generate_indexed_text()
             self.write_to_disk()
+            self.entity_grid=EntityGrid(self)
             logger.info(f'Formed {self}')
-
-        self.entity_grid=EntityGrid(self)
 
     def __repr__(self):
         return f"Dialog({self.name}, {self.project_id}, {self.datarow_id})"
@@ -347,72 +346,115 @@ class EntityGrid:
     def __init__(self, dialog):
 
         self.dialog = dialog
-        self.sentences =[Sentence(*sent)
-                         for sent in
-                         list(
-                             map(lambda x: (x[0],x[1][0],x[1][1],x[1][2]),
-                                 enumerate(
-                                     list(
-                                         reduce(lambda x,y:
-                                                x + [(x[-1][1]+1,x[-1][1]+len(y)+1,y)],
-                                                self.sentence_tokenizer.tokenize(dialog.text),
-                                                [(0,0,'')]))[1:])
-                                )
-                         )
-                        ]
+        self.text = self.dialog.text
+        self.sentences = self.acquire_sentences()
+        self.mentions = self.acquire_mentions()
+        self.entities = self.acquire_entities()
 
-        self.set_speakers()
+    def acquire_sentences(self):
 
-        [print(x) or x for x in self.sentences]
+        sentences=\
+                [Sentence(self, *sent)
+                 for sent in
+                 list(
+                     map(lambda x: (x[0],x[1][0],x[1][1],x[1][2]),
+                         enumerate(
+                             reduce(lambda result, sent:
+                                    result + [(self.text.index(sent,result[0][1]),self.text.index(sent,result[0][1])+len(sent), sent)],
+                                    self.sentence_tokenizer.tokenize(self.text),
+                                    [(0,0,'')])[1:])))]
 
-    def to_dataframe(self):
+#        sentences=\
+#                [Sentence(self, *sent)
+#                 for sent in
+#                 list(
+#                     map(lambda x: (x[0],x[1][0],x[1][1],x[1][2]),
+#                         enumerate(
+#                             reduce(lambda x,y:
+#                                    x + [(x[-1][1]+1,x[-1][1]+len(y)+1,y)],
+#                                    self.sentence_tokenizer.tokenize(self.text),
+#                                    [(0,0,'')])[1:])))]
+#
 
-        return pd.DataFrame(
-            [{'id': sent.index,
-              'start': sent.start,
-              'end': sent.end,
-              'text': sent.text,
-              'speaker': sent.speaker}
-             for sent in self.sentences]
-        )
-
-
-    def set_speakers(self):
 
         current = 'anchor'
-
-        for sent in self.sentences:
-
+        for sent in sentences:
             if sent.text.startswith('p:'):
                 current='presenter'
             elif sent.text.startswith('o:'):
                 current='operator'
-
             sent.set_speaker(current)
+
+        return sentences
+
+    def acquire_mentions(self):
+        spans, relations = self.create_gold()
+
+        return\
+                [Mention({'id':k}|v|{'owner':self}) for k, v in spans.to_dict(orient='index').items()]
+
+
+
+    def acquire_entities(self):
+
+
+        return None
+
+    def create_gold(self):
+        return self.dialog.agreement.matched_spans, self.dialog.agreement.matched_relations
+
+    def __repr__(self):
+        return\
+                f"EntityGrid({self.dialog.name})"
+
+    def to_dataframe(self):
+
+        return pd.DataFrame(
+            [sent.__dict__
+             for sent in self.sentences],
+            columns=['id','start','end','text','speaker']
+        )
 
 class Sentence:
 
-    def __init__(self, index, start, end, text):
+    def __init__(self, owner, id, start, end, text):
 
-        for field in ['index','start','end','text']:
+        for field in ['owner', 'id','start','end','text']:
             exec(f'self.{field} = {field}')
-
-            self.speaker = None
+        self.speaker = None
 
     def __repr__(self):
         return f'Sentence({self.index},({self.start},{self.end}), {self.text}, {self.speaker})'
+
+    def __contains__(self, mention):
+        "tell wether you cover the given mention indices"
+        return self.start <= mention.start and self.end >= mention.end
 
     def set_speaker(self, speaker):
         self.speaker=speaker
 
 class Mention:
 
-    def __init__(self):
+    def __init__(self, args_dict):
+        self.__dict__.update(args_dict)
+#        self.sentence_id = self.get_sentence_id()
 
-        self.form = None
-        self.text = None
-        self.start = None
-        self.end = None
-        self.prec = None
-        self.succ = None
-        self.sentence = None
+    def __repr__(self):
+        return f"Mention({self.id},{self.start},{self.end},{self.text})"
+
+    def get_sentence_id(self):
+        try:
+            return\
+                    [sentence.id
+                     for sentence in self.owner.sentences
+                     if self in sentence][0]
+        except IndexError:
+            print(self.owner)
+            print(self)
+            sys.exit()
+
+class Entity:
+
+    def __init__(self):
+        pass
+
