@@ -44,10 +44,10 @@ class Monitor():
 
         st.sidebar.button("view annotation",
                       help="annotations of the last viewed dialog",
-                      on_click=self.display_dialog)
+                      on_click=self.display_annotation)
         st.sidebar.button("view analysis",
                       help="analysis of the last viewed dialog",
-                      on_click=self.analyze_dialog)
+                      on_click=self.display_analysis)
         st.sidebar.button("update",
                       help="update the last viewed dialog",
                       on_click=self.update_dialog)
@@ -64,20 +64,24 @@ class Monitor():
         if dialog_name:
             dialog = self.da.get_dialog('name', dialog_name)
             self.da.update(dialog)
-            self.display_dialog()
+            self.display_annotation()
         else:
             st.warning('Please select a dialog.', icon='😄')
 
-    def analyze_dialog(self):
+    def display_analysis(self):
 
         dialog_name = st.session_state.dialog_name
         if dialog_name:
             dialog = self.da.get_dialog('name', dialog_name)
-            self.display_df(lambda x:'Sentences:', dialog.entity_grid.to_dataframe())
 
 
-    def display_dialog(self):
+            self.display_df(lambda x:'Sentences:', dialog.entity_grid['sentences'])
+            self.display_df(lambda x:'Mentions:', dialog.entity_grid['mentions'])
+            self.display_df(lambda x:'Links:', dialog.entity_grid['links'])
 
+
+
+    def display_annotation(self):
 
         dialog_name = st.session_state.dialog_name
         if dialog_name:

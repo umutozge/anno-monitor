@@ -5,8 +5,6 @@ import sys
 import json
 import time
 
-
-
 from functools import reduce
 
 from commons import USERS, LB_API_KEY, DATAPATH, LB_PROJECTS, make_color_picker
@@ -114,7 +112,7 @@ class Dialog:
                                 [
                                  [{'id': span['feature_id'],
                                    'start': span['location']['start'],
-                                   'end': span['location']['end'],
+                                   'end': span['location']['end'] + 1,
                                    'tag': span['name'],
                                    'labeler': USERS[lb_label['label_details']['created_by']]}
                                   for span in lb_label['annotations']['objects']]
@@ -139,7 +137,7 @@ class Dialog:
 
         self.spans = (raw_spans
                       .assign(id = lambda df: df.loc[:,'range'].apply(lambda x: range_to_id[x]))
-                      .assign(text = lambda df: df['range'].apply(lambda x: self.text[x[0]:x[1]+1]))
+                      .assign(text = lambda df: df['range'].apply(lambda x: self.text[x[0]:x[1]]))
                       .drop('range', axis=1)
                       .reset_index(drop=True))
 
@@ -163,7 +161,6 @@ class Dialog:
                  .pipe(lambda df: df.loc[~((df['from'] == -1) | (df['to'] == -1)),:])
                 )
 
-
     def generate_indexed_text(self):
 
         color = make_color_picker()
@@ -185,9 +182,9 @@ class Dialog:
         accu = ""
         for start_or_end in start_end:
             if start_or_end[1] is not None:
-                accu += text[last_edit_point:start_or_end[0] + 1]
+                accu += text[last_edit_point:start_or_end[0]]
                 accu += f'<sup>{start_or_end[1]}</sup>]'
-                last_edit_point = start_or_end[0] + 1
+                last_edit_point = start_or_end[0]
             else:
                 accu += text[last_edit_point:start_or_end[0]]
                 accu += f':{color()}['
@@ -346,10 +343,12 @@ class EntityGrid:
     def __init__(self, dialog):
 
         self.dialog = dialog
+        self.spans, self.relations = self.create_gold()
         self.text = self.dialog.text
         self.sentences = self.acquire_sentences()
+        self.links = self.acquire_links()
         self.mentions = self.acquire_mentions()
-        self.entities = self.acquire_entities()
+        #self.entities = self.acquire_entities()
 
     def acquire_sentences(self):
 
@@ -360,22 +359,11 @@ class EntityGrid:
                      map(lambda x: (x[0],x[1][0],x[1][1],x[1][2]),
                          enumerate(
                              reduce(lambda result, sent:
-                                    result + [(self.text.index(sent,result[0][1]),self.text.index(sent,result[0][1])+len(sent), sent)],
+                                    result + [(result[-1][1],
+                                               self.text.index(sent,result[-1][1])+len(sent),
+                                               sent)],
                                     self.sentence_tokenizer.tokenize(self.text),
                                     [(0,0,'')])[1:])))]
-
-#        sentences=\
-#                [Sentence(self, *sent)
-#                 for sent in
-#                 list(
-#                     map(lambda x: (x[0],x[1][0],x[1][1],x[1][2]),
-#                         enumerate(
-#                             reduce(lambda x,y:
-#                                    x + [(x[-1][1]+1,x[-1][1]+len(y)+1,y)],
-#                                    self.sentence_tokenizer.tokenize(self.text),
-#                                    [(0,0,'')])[1:])))]
-#
-
 
         current = 'anchor'
         for sent in sentences:
@@ -387,33 +375,71 @@ class EntityGrid:
 
         return sentences
 
-    def acquire_mentions(self):
-        spans, relations = self.create_gold()
-
+    def acquire_links(self):
         return\
-                [Mention({'id':k}|v|{'owner':self}) for k, v in spans.to_dict(orient='index').items()]
+                reduce(lambda dic, tup:
+                       dic|{tup[0]:[tup[1]]} if tup[0] not in dic.keys()
+                       else dic|{tup[0]: dic[tup[0]] + [tup[1]]},
+                       [(rel['from'], (rel['to'],rel['tag']))
+                        for rel in self.relations.to_dict(orient='index').values()],
+                       dict())
+
+    def acquire_mentions(self):
+        return\
+            (pd.DataFrame(
+                [mention.__dict__
+                 for mention in
+                 [Mention({'id':k}|
+                          v|
+                          {'owner':self,
+                           'role': None,
+                           'form': None,
+                           'coref': None,})
+                  for k, v in self.spans.to_dict(orient='index').items()]
+                ],
+            )
+                .assign(sent = lambda df: df['sentence'].map(lambda x:x.text))
+                .drop(columns=['sentence'])
+                .rename(columns={'sentence_id':'sent_id'})
+                .loc[:,['id','tag','text','sent','sent_id','speaker','role']]
+            )
 
 
+    def get_role(self, id, tag, text):
+        link = self.links.get(id)
+        return 'SUBJ'
 
     def acquire_entities(self):
-
-
         return None
 
     def create_gold(self):
-        return self.dialog.agreement.matched_spans, self.dialog.agreement.matched_relations
+        return\
+        self.dialog.agreement.matched_spans, self.dialog.agreement.matched_relations
 
     def __repr__(self):
         return\
                 f"EntityGrid({self.dialog.name})"
 
-    def to_dataframe(self):
+    def __getitem__(self, field):
+        if field=='sentences':
+            return pd.DataFrame(
+                [sent.__dict__
+                 for sent in self.sentences],
+                columns=['id','start','end','text','speaker']
+            )
+        elif field=='mentions':
+            return self.mentions
+        elif field=='links':
+            return\
+                    (pd.DataFrame(
+                        [{'id': key, 'links':str(val)}
+                        for key, val in self.links.items()],
+                        columns=['id','links']
+                    )
+                        .loc[:,['id','links']])
+        else:
+            raise ValueError
 
-        return pd.DataFrame(
-            [sent.__dict__
-             for sent in self.sentences],
-            columns=['id','start','end','text','speaker']
-        )
 
 class Sentence:
 
@@ -424,10 +450,11 @@ class Sentence:
         self.speaker = None
 
     def __repr__(self):
-        return f'Sentence({self.index},({self.start},{self.end}), {self.text}, {self.speaker})'
+        return f'Sentence({self.id},({self.start},{self.end}), {self.text}, {self.speaker})'
 
     def __contains__(self, mention):
-        "tell wether you cover the given mention indices"
+        "tell whether you cover the given mention"
+
         return self.start <= mention.start and self.end >= mention.end
 
     def set_speaker(self, speaker):
@@ -436,25 +463,28 @@ class Sentence:
 class Mention:
 
     def __init__(self, args_dict):
-        self.__dict__.update(args_dict)
-#        self.sentence_id = self.get_sentence_id()
+        if self.valid_args(args_dict):
+            self.__dict__.update(args_dict)
+            self.sentence = self.get_sentence()
+            self.sentence_id = self.sentence.id
+            self.speaker = self.sentence.speaker
+        else:
+            logger.error(f"Mention init with {args_dict}")
 
     def __repr__(self):
         return f"Mention({self.id},{self.start},{self.end},{self.text})"
 
-    def get_sentence_id(self):
+    def valid_args(self,args):
+        return\
+                isinstance(args,dict)\
+                and set(args.keys()) == set(['id','tag','text','owner','start','end','role','form','coref'])
+
+    def get_sentence(self):
         try:
             return\
-                    [sentence.id
+                    [sentence
                      for sentence in self.owner.sentences
                      if self in sentence][0]
         except IndexError:
-            print(self.owner)
-            print(self)
-            sys.exit()
-
-class Entity:
-
-    def __init__(self):
-        pass
-
+            logger.error(f"Could not get sentence for {self} in {self.owner}.")
+            return Sentence(self, -1,-1,-1,'ERROR')
