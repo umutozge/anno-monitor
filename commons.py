@@ -43,6 +43,21 @@ def make_color_picker(colors=['green','blue','orange','red']):
     return func
 
 
+def make_counter(add_on):
+    def counter():
+        counter.val += 1
+        return counter.val
+    counter.val = add_on
+    return counter
+
+
+def convert_link_tag(inp):
+    dic = (first := {k:v for k,v in enumerate(LINK_TAGS)}) | {v:k for k, v in first.items()}
+    return dic[inp]
+
+
+LINK_TAGS = ['subj','s_subj','obj','s_obj','poss','coref']
+
 USERS = focus_on(USERS,'name')
 
 DATAPATH = 'data'

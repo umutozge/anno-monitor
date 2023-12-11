@@ -2,12 +2,13 @@ import pandas as pd
 import numpy as np
 import os
 import sys
+import re
 import json
 import time
 
 from functools import reduce
 
-from commons import USERS, LB_API_KEY, DATAPATH, LB_PROJECTS, make_color_picker
+from commons import USERS, LB_API_KEY, DATAPATH, LB_PROJECTS, make_color_picker, convert_link_tag, make_counter
 from workers import LBWorker
 
 import logging
@@ -225,7 +226,7 @@ class Agreement:
              {'matched': len(self.matched_relations),
               'unmatched':len(self.unmatched_relations),
               'disagreed':len(self.disagreed_relations) }})
-            .pipe(lambda df: pd.concat([df,pd.DataFrame([df.sum()], index=['total'])]))
+            .pipe(lambda df: pd.concat([df, pd.DataFrame([df.sum()], index=['total'])]))
             .assign(spans_p = lambda df: df.apply(lambda row: f"{round(row['spans']/df.at['total','spans'] * 100)}%", axis=1),
              relations_p = lambda df: df.apply(lambda row: f"{round(row['relations']/df.at['total','relations'] * 100)}%", axis=1))
             .pipe(lambda df: df.iloc[:,[0,2,1,3]])
@@ -348,7 +349,6 @@ class EntityGrid:
         self.sentences = self.acquire_sentences()
         self.links = self.acquire_links()
         self.mentions = self.acquire_mentions()
-        #self.entities = self.acquire_entities()
 
     def acquire_sentences(self):
 
@@ -376,41 +376,109 @@ class EntityGrid:
         return sentences
 
     def acquire_links(self):
+        """Returns a dict of the form:
+            {from_id: [(to_id, tag),...]}
+        """
+
         return\
                 reduce(lambda dic, tup:
                        dic|{tup[0]:[tup[1]]} if tup[0] not in dic.keys()
                        else dic|{tup[0]: dic[tup[0]] + [tup[1]]},
-                       [(rel['from'], (rel['to'],rel['tag']))
+                       [(rel['from'], (rel['to'],convert_link_tag(rel['tag'])))
                         for rel in self.relations.to_dict(orient='index').values()],
                        dict())
 
+
     def acquire_mentions(self):
         return\
-            (pd.DataFrame(
-                [mention.__dict__
-                 for mention in
-                 [Mention({'id':k}|
-                          v|
-                          {'owner':self,
-                           'role': None,
-                           'form': None,
-                           'coref': None,})
-                  for k, v in self.spans.to_dict(orient='index').items()]
-                ],
-            )
-                .assign(sent = lambda df: df['sentence'].map(lambda x:x.text))
-                .drop(columns=['sentence'])
-                .rename(columns={'sentence_id':'sent_id'})
-                .loc[:,['id','tag','text','sent','sent_id','speaker','role']]
-            )
+                self.set_in_links(
+                    self.set_forms(
+                        self.set_roles(
+                            self.expand_mentions(
+                                self.spans_to_mentions()
+                            )
+                        )
+                    )
+                )
 
 
-    def get_role(self, id, tag, text):
-        link = self.links.get(id)
-        return 'SUBJ'
+    def spans_to_mentions(self):
+        return\
+                (pd.DataFrame(
+                    [mention.__dict__
+                     for mention in
+                     [Mention(
+                         {'owner':self,
+                          'coref': self.links.get(v['id'])}
+                         |v
+                     )
+                         for  v in self.spans.to_dict(orient='index').values()]
+                    ]
+                )
+                    .assign(sent = lambda df: df['sentence'].map(lambda x:x.text))
+                    .drop(columns=['sentence'])
+                    .rename(columns={'sentence_id':'sent_id'})
+                    .sort_values(by='start')
+#                    .loc[:,['id','tag','text','sent','sent_id','speaker','role','form','coref','owner']]
+                )
 
-    def acquire_entities(self):
-        return None
+    def expand_mentions(self, mentions):
+
+        gen_id = make_counter(self.spans.loc[:,'id'].max())
+
+        return\
+                (pd.concat([mentions,
+                           (mentions
+                            .dropna(subset=['coref'])
+                            .assign(coref = lambda df: df.apply(lambda row: [row['coref'][1]] if len(row['coref']) == 2 else None, axis=1))
+                            .dropna(subset=['coref'])
+                            .assign(id = lambda df: df.apply(lambda row: gen_id(), axis=1))
+                            .pipe(lambda df: print(df) or df)
+                           )]
+                         )
+                 .assign(out_link = lambda df:
+                         df.apply(lambda row:
+                                  convert_link_tag(row['coref'][0][1])
+                                  if row['coref'] else None, axis=1))
+                 .assign(coref = lambda df:
+                         df.apply(lambda row:
+                                  row['coref'][0][0]
+                                  if row['coref'] else None, axis=1))
+                )
+
+
+    def set_roles(self, mentions):
+        return\
+                (mentions
+                 .assign(role = lambda df:
+                         df.apply(lambda row:
+                                  Linger.role(row) if row['tag']=='nom' else row['out_link'],
+                                  axis=1))
+                )
+
+    def set_forms(self, mentions):
+        return\
+                (mentions
+                 .assign(form = lambda df:
+                         df.apply(lambda row:
+                                  'null'
+                                  if Linger.is_null(row) or row['tag'] == 'pred'
+                                  else 'overt',
+                                  axis=1)
+                        )
+                )
+
+    def set_in_links(self, mentions):
+        return\
+                (mentions
+                 .assign(in_link = lambda df:
+                         df.apply(lambda row:
+                                  df[df.coref == row['id']]['out_link'].values[0]
+                                  if (df.coref == row['id']).any()
+                                  else None,
+                                  axis=1)
+                        )
+                )
 
     def create_gold(self):
         return\
@@ -421,6 +489,7 @@ class EntityGrid:
                 f"EntityGrid({self.dialog.name})"
 
     def __getitem__(self, field):
+        """For viewing purposes only"""
         if field=='sentences':
             return pd.DataFrame(
                 [sent.__dict__
@@ -428,7 +497,18 @@ class EntityGrid:
                 columns=['id','start','end','text','speaker']
             )
         elif field=='mentions':
-            return self.mentions
+            return self.mentions.loc[:,['id',
+                                        'tag',
+                                        'text',
+                                        'sent',
+                                        'sent_id',
+                                        'speaker',
+                                        'role',
+                                        'form',
+                                        'out_link',
+                                        'in_link',
+                                        'coref',
+                                       ]]
         elif field=='links':
             return\
                     (pd.DataFrame(
@@ -439,7 +519,6 @@ class EntityGrid:
                         .loc[:,['id','links']])
         else:
             raise ValueError
-
 
 class Sentence:
 
@@ -462,8 +541,13 @@ class Sentence:
 
 class Mention:
 
+    names = ['id','tag','text','owner','start','end','role','form','coref','out_link']
+
     def __init__(self, args_dict):
-        if self.valid_args(args_dict):
+
+        self.__dict__ = {k:None for k in self.names}
+        self.__dict__.update(args_dict)
+        if len(self.__dict__.keys()) == len(self.names):
             self.__dict__.update(args_dict)
             self.sentence = self.get_sentence()
             self.sentence_id = self.sentence.id
@@ -474,10 +558,6 @@ class Mention:
     def __repr__(self):
         return f"Mention({self.id},{self.start},{self.end},{self.text})"
 
-    def valid_args(self,args):
-        return\
-                isinstance(args,dict)\
-                and set(args.keys()) == set(['id','tag','text','owner','start','end','role','form','coref'])
 
     def get_sentence(self):
         try:
@@ -488,3 +568,34 @@ class Mention:
         except IndexError:
             logger.error(f"Could not get sentence for {self} in {self.owner}.")
             return Sentence(self, -1,-1,-1,'ERROR')
+
+class Linger:
+
+    @staticmethod
+    def is_nominative(mention: pd.core.series.Series):
+        return\
+                mention['owner'].text[mention['end']] == ' '
+
+    @staticmethod
+    def is_genitive(mention: pd.core.series.Series):
+        return\
+                bool(
+                    re.search('n?(u|ü|i|ı)n', mention['owner'].text[mention['end']:mention['end']+4])
+                )
+
+    @staticmethod
+    def is_null(mention: pd.core.series.Series):
+        return\
+                mention['text'] == ' ' or\
+                mention['tag'] == 'pred'
+
+    @staticmethod
+    def role(mention: pd.core.series.Series):
+        if Linger.is_nominative(mention):
+            return 'subj'
+        elif Linger.is_genitive(mention):
+            return 'subj'
+        else:
+            return 'obj'
+
+

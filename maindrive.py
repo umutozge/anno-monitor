@@ -75,9 +75,9 @@ class Monitor():
             dialog = self.da.get_dialog('name', dialog_name)
 
 
-            self.display_df(lambda x:'Sentences:', dialog.entity_grid['sentences'])
             self.display_df(lambda x:'Mentions:', dialog.entity_grid['mentions'])
             self.display_df(lambda x:'Links:', dialog.entity_grid['links'])
+            self.display_df(lambda x:'Sentences:', dialog.entity_grid['sentences'])
 
 
 
