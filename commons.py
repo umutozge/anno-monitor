@@ -1,4 +1,5 @@
 from random import randint
+from functools import reduce
 
 USERS = [{"name":"faruk", "id":1, "email":"buyuktekinf@gmail.com"},
          {"name":"umut",  "id":2, "email":"umozge@metu.edu.tr"},
@@ -42,6 +43,16 @@ def make_color_picker(colors=['green','blue','orange','red']):
 
     return func
 
+
+
+def shrink_space(text):
+    return\
+            ''.join(
+                (reduce(
+                    lambda x,y:
+                    x+ ('_' if x[-1] in [' ','_'] and y == ' ' else y),
+                    text
+                )))
 
 def make_counter(add_on):
     def counter():

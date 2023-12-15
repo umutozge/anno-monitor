@@ -8,7 +8,7 @@ import time
 
 from functools import reduce
 
-from commons import USERS, LB_API_KEY, DATAPATH, LB_PROJECTS, make_color_picker, convert_link_tag, make_counter
+from commons import USERS, LB_API_KEY, DATAPATH, LB_PROJECTS, make_color_picker, convert_link_tag, make_counter, shrink_space
 from workers import LBWorker
 
 import logging
@@ -37,7 +37,7 @@ class DialogAnnotation:
             data = self.data_reader.read_data(project, update=update)
             for d in data:
                 dialog = Dialog(d, self)
-                if dialog:
+                if dialog.is_ready:
                     store.append(dialog)
 
         self.dialogs = (pd.DataFrame({'object': store})
@@ -47,12 +47,13 @@ class DialogAnnotation:
                         )
         return self
 
+
     def update(self, dialog):
         self.data_reader.read_data(dialog.project_id, update=True)
         self.load_projects()
 
     def update_all(self):
-        self.laod_projects(update=True)
+        self.load_projects(update=True)
 
     def get_dialog(self, key, value):
         return self.dialogs.loc[lambda df: df[key] == value, 'object'].values[0]
@@ -69,14 +70,14 @@ class Dialog:
 
         self.owner = owner
         self.lb_datarow = lb_datarow
-        self.datarow_id=lb_datarow['data_row']['id']
+        self.datarow_id = lb_datarow['data_row']['id']
         self.text = lb_datarow['data_row']['row_data']
         self.name = lb_datarow['data_row']['details']['dataset_name'][:-5]
         self.project_id = list(lb_datarow['projects'].keys())[0]
-        self.spans = None
-        self.relations = None
+        self.is_ready = False
 
-        self.organize_data()
+        self.spans, self.relations = self.organize_data()
+
 
         if self:
             self.labelers = list(self.spans.loc[:,'labeler'].unique())
@@ -85,12 +86,18 @@ class Dialog:
             self.write_to_disk()
             self.entity_grid=EntityGrid(self)
             logger.info(f'Formed {self}')
+            self.is_ready = True
 
     def __repr__(self):
         return f"Dialog({self.name}, {self.project_id}, {self.datarow_id})"
 
     def __bool__(self):
-        return bool(self.spans is not None)
+        return\
+                self.spans is not None and\
+                self.relations is not None and\
+                len(self.spans.loc[:,'labeler'].unique()) == 2 and\
+                len(self.relations.loc[:,'labeler'].unique()) == 2
+
 
     def write_to_disk(self):
         with open(os.path.join(self.owner.datapath,f"{self.datarow_id}-{self.name}.json"), 'w', encoding='utf-8') as ouf:
@@ -105,7 +112,8 @@ class Dialog:
 
         # check for exactly 2 labels
         if len(lb_labels) != 2:
-            return None
+            logging.warning(f"Not enough labeler in {self.name}")
+            return None, None
 
         raw_spans = (pd.DataFrame(
                      list(
@@ -136,13 +144,13 @@ class Dialog:
                            .drop(['start','end'], axis=1)
                            .set_index('id'))
 
-        self.spans = (raw_spans
-                      .assign(id = lambda df: df.loc[:,'range'].apply(lambda x: range_to_id[x]))
-                      .assign(text = lambda df: df['range'].apply(lambda x: self.text[x[0]:x[1]]))
-                      .drop('range', axis=1)
-                      .reset_index(drop=True))
+        spans = (raw_spans
+                 .assign(id = lambda df: df.loc[:,'range'].apply(lambda x: range_to_id[x]))
+                 .assign(text = lambda df: df['range'].apply(lambda x: self.text[x[0]:x[1]]))
+                 .drop('range', axis=1)
+                 .reset_index(drop=True))
 
-        self.relations =\
+        relations =\
                 (pd.DataFrame(
                     list(
                         reduce(lambda x,y:x+y,
@@ -154,13 +162,16 @@ class Dialog:
                                     for relation in lb_label['annotations']['relationships']]
                                    for lb_label in lb_labels])),
                     columns=['tag','from','to','labeler'])
-                 .assign(fro = lambda df: df.loc[:,'from'].apply(lambda x: range_to_id.get(old_id_to_range.at[x,'range'] if x in old_id_to_range.index else -1, -1)))
-                 .assign(to = lambda df: df.loc[:,'to'].apply(lambda x: range_to_id.get(old_id_to_range.at[x,'range'] if x in old_id_to_range.index else -1, -1)))
-                 .drop('from', axis=1)
-                 .rename({'fro':'from'}, axis=1)
-                 .pipe(lambda df: df.loc[:,['from','to','tag','labeler']])
-                 .pipe(lambda df: df.loc[~((df['from'] == -1) | (df['to'] == -1)),:])
+                    .assign(fro = lambda df: df.loc[:,'from'].apply(lambda x: range_to_id.get(old_id_to_range.at[x,'range'] if x in old_id_to_range.index else -1, -1)))
+                    .assign(to = lambda df: df.loc[:,'to'].apply(lambda x: range_to_id.get(old_id_to_range.at[x,'range'] if x in old_id_to_range.index else -1, -1)))
+                    .drop('from', axis=1)
+                    .rename({'fro':'from'}, axis=1)
+                    .pipe(lambda df: df.loc[:,['from','to','tag','labeler']])
+                    .pipe(lambda df: df.loc[~((df['from'] == -1) | (df['to'] == -1)),:])
                 )
+
+        return spans, relations
+
 
     def generate_indexed_text(self):
 
@@ -202,30 +213,41 @@ class Agreement:
 
     def __init__(self, dialog):
 
-        self.spans = dialog.spans
-        self.relations = dialog.relations
+        self.dialog = dialog
         self.labelers = dialog.labelers
+        self.spans = [dialog.spans[dialog.spans['labeler'] == labeler]
+                      for labeler in self.labelers]
 
-        self.matched_spans = self._compute_matched_spans()
-        self.unmatched_spans = self._compute_unmatched_spans()
-        self.disagreed_spans = self._compute_disagreed_spans()
-        self.disagreed_relations = self._compute_disagreed_relations()
-        self.matched_relations = self._compute_matched_relations()
-        self.unmatched_relations = self._compute_unmatched_relations()
+        self.relations = [dialog.relations[dialog.relations['labeler'] == labeler]
+                      for labeler in self.labelers]
+
+        self.results = {
+            'matched': {
+                'spans': self._compute_matched_spans(),
+                'relations':self._compute_matched_relations()},
+            'unmatched': {
+                'spans': self._compute_unmatched_spans(),
+                'relations': self._compute_unmatched_relations()},
+            'disagreed': {
+                'spans': self._compute_disagreed_spans(),
+                'relations': self._compute_disagreed_relations()}}
+
         self.summary = self._compute_summary()
 
+    def __bool__(self):
+        return bool(self.results)
 
     def _compute_summary(self):
 
         return (pd.DataFrame(
             {'spans':
-             {'matched': len(self.matched_spans),
-              'unmatched': len(self.unmatched_spans),
-              'disagreed': len(self.disagreed_spans)},
+             {'matched': len(self.results['matched']['spans']),
+              'unmatched': len(self.results['unmatched']['spans']),
+              'disagreed': len(self.results['disagreed']['spans'])},
              'relations':
-             {'matched': len(self.matched_relations),
-              'unmatched':len(self.unmatched_relations),
-              'disagreed':len(self.disagreed_relations) }})
+             {'matched': len(self.results['matched']['relations']),
+              'unmatched':len(self.results['unmatched']['relations']),
+              'disagreed':len(self.results['disagreed']['relations'])}})
             .pipe(lambda df: pd.concat([df, pd.DataFrame([df.sum()], index=['total'])]))
             .assign(spans_p = lambda df: df.apply(lambda row: f"{round(row['spans']/df.at['total','spans'] * 100)}%", axis=1),
              relations_p = lambda df: df.apply(lambda row: f"{round(row['relations']/df.at['total','relations'] * 100)}%", axis=1))
@@ -234,20 +256,16 @@ class Agreement:
 
 
     def _compute_matched_relations(self):
-        relations = self.relations.groupby('labeler')
-        left, right = [relations.get_group(labeler) for labeler in self.labelers]
 
-        return (pd.merge(left,right,
+        return (pd.merge(*self.relations,
                          on=['from','to','tag'])
                 .loc[:,['from','to','tag']]
                 .reset_index(drop=True)
                )
 
     def _compute_unmatched_relations(self):
-        relations = self.relations.groupby('labeler')
-        left, right = [relations.get_group(labeler) for labeler in self.labelers]
 
-        return (pd.merge(left,right,
+        return (pd.merge(*self.relations,
                          on=['from','to'],
                          how='outer',
                          indicator=True,
@@ -264,10 +282,8 @@ class Agreement:
                )
 
     def _compute_disagreed_relations(self):
-        relations = self.relations.groupby('labeler')
-        left, right = [relations.get_group(labeler) for labeler in self.labelers]
 
-        return (pd.merge(left,right,
+        return (pd.merge(*self.relations,
                          on=['from','to'],
                          how='inner',
                          suffixes=[f'_{l}' for l in self.labelers])
@@ -277,13 +293,9 @@ class Agreement:
                 .reset_index(drop=True)
                )
 
-
     def _compute_matched_spans(self):
 
-        labels = self.spans.groupby('labeler')
-        left, right = [labels.get_group(labeler) for labeler in self.labelers]
-
-        return (pd.merge(left,right, on=['id','tag'], how='inner')
+        return (pd.merge(*self.spans, on=['id','tag'], how='inner')
                 .sort_values(by="id")
                 .rename(columns={'start_x':'start','end_x':'end','text_x':'text'})
                 .pipe(lambda df:
@@ -293,10 +305,7 @@ class Agreement:
 
     def _compute_unmatched_spans(self):
 
-        labels = self.spans.groupby('labeler')
-        left, right = [labels.get_group(labeler) for labeler in self.labelers]
-
-        return (pd.merge(left,right,
+        return (pd.merge(*self.spans,
                          how='outer',
                          indicator=True,
                          on='id',
@@ -322,10 +331,7 @@ class Agreement:
 
     def _compute_disagreed_spans(self):
 
-        labels = self.spans.groupby('labeler')
-        left, right = [labels.get_group(labeler) for labeler in self.labelers]
-
-        return (pd.merge(left,right,
+        return (pd.merge(*self.spans,
                          on='id',
                          how='inner',
                          suffixes=[f'_{l}' for l in self.labelers])
@@ -345,13 +351,12 @@ class EntityGrid:
 
         self.dialog = dialog
         self.spans, self.relations = self.create_gold()
-        self.text = self.dialog.text
+        self.text = shrink_space(self.dialog.text)
         self.sentences = self.acquire_sentences()
         self.links = self.acquire_links()
         self.mentions = self.acquire_mentions()
 
     def acquire_sentences(self):
-
         sentences=\
                 [Sentence(self, *sent)
                  for sent in
@@ -360,7 +365,10 @@ class EntityGrid:
                          enumerate(
                              reduce(lambda result, sent:
                                     result + [(result[-1][1],
-                                               self.text.index(sent,result[-1][1])+len(sent),
+                                               (lambda x:
+                                                (logger.error(f'Text search error in {self.dialog.name} result {result} and sentence {sent}.') or x)
+                                                if x == -1 else x) (self.text.find(sent, result[-1][1]))
+                                               +len(sent),
                                                sent)],
                                     self.sentence_tokenizer.tokenize(self.text),
                                     [(0,0,'')])[1:])))]
@@ -401,7 +409,6 @@ class EntityGrid:
                     )
                 )
 
-
     def spans_to_mentions(self):
         return\
                 (pd.DataFrame(
@@ -430,10 +437,12 @@ class EntityGrid:
                 (pd.concat([mentions,
                            (mentions
                             .dropna(subset=['coref'])
-                            .assign(coref = lambda df: df.apply(lambda row: [row['coref'][1]] if len(row['coref']) == 2 else None, axis=1))
+#                            .pipe(lambda df: print(df) or df)
+                            .assign(coref = lambda df: df.apply(lambda row: [row['coref'][1]]
+                                                                if len(row['coref']) == 2 else None, axis=1))
                             .dropna(subset=['coref'])
                             .assign(id = lambda df: df.apply(lambda row: gen_id(), axis=1))
-                            .pipe(lambda df: print(df) or df)
+#                            .pipe(lambda df: print(df) or df)
                            )]
                          )
                  .assign(out_link = lambda df:
@@ -482,7 +491,7 @@ class EntityGrid:
 
     def create_gold(self):
         return\
-        self.dialog.agreement.matched_spans, self.dialog.agreement.matched_relations
+        self.dialog.agreement.results['matched']['spans'], self.dialog.agreement.results['matched']['relations']
 
     def __repr__(self):
         return\

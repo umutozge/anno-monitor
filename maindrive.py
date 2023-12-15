@@ -48,8 +48,8 @@ class Monitor():
         st.sidebar.button("view analysis",
                       help="analysis of the last viewed dialog",
                       on_click=self.display_analysis)
-        st.sidebar.button("update",
-                      help="update the last viewed dialog",
+        st.sidebar.button("sync",
+                      help="sync with labelbox",
                       on_click=self.update_dialog)
 
 
@@ -60,13 +60,8 @@ class Monitor():
 
     def update_dialog(self):
 
-        dialog_name = st.session_state.dialog_name
-        if dialog_name:
-            dialog = self.da.get_dialog('name', dialog_name)
-            self.da.update(dialog)
-            self.display_annotation()
-        else:
-            st.warning('Please select a dialog.', icon='😄')
+        with st.spinner('Updating data, this may take a while...'):
+            self.da.update_all()
 
     def display_analysis(self):
 
@@ -78,7 +73,6 @@ class Monitor():
             self.display_df(lambda x:'Mentions:', dialog.entity_grid['mentions'])
             self.display_df(lambda x:'Links:', dialog.entity_grid['links'])
             self.display_df(lambda x:'Sentences:', dialog.entity_grid['sentences'])
-
 
 
     def display_annotation(self):
@@ -98,16 +92,16 @@ class Monitor():
 
             col1, col2, col3 = st.columns(3)
             with col1:
-                self.display_df(lambda x: f"Matched spans ({len(x)}):", agreement.matched_spans)
-                self.display_df(lambda x: f"Matched relations ({len(x)}):", agreement.matched_relations)
+                self.display_df(lambda x: f"Matched spans ({len(x)}):", agreement.results['matched']['spans'])
+                self.display_df(lambda x: f"Matched relations ({len(x)}):", agreement.results['matched']['relations'])
 
             with col2:
-                self.display_df(lambda x: f"Unmatched spans ({len(x)}):", agreement.unmatched_spans)
-                self.display_df(lambda x: f"Unmatched relations ({len(x)}):", agreement.unmatched_relations)
+                self.display_df(lambda x: f"Unmatched spans ({len(x)}):", agreement.results['unmatched']['spans'])
+                self.display_df(lambda x: f"Unmatched relations ({len(x)}):", agreement.results['unmatched']['relations'])
 
             with col3:
-                self.display_df(lambda x: f"Disagreed spans ({len(x)}):", agreement.disagreed_spans)
-                self.display_df(lambda x: f"Disagreed relations ({len(x)}):", agreement.disagreed_relations)
+                self.display_df(lambda x: f"Disagreed spans ({len(x)}):", agreement.results['disagreed']['spans'])
+                self.display_df(lambda x: f"Disagreed relations ({len(x)}):", agreement.results['disagreed']['relations'])
 
             st.markdown("Text:  ")
             st.markdown(dialog.indexed_text, unsafe_allow_html=True)
