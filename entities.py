@@ -416,7 +416,7 @@ class EntityGrid:
                      for mention in
                      [Mention(
                          {'owner':self,
-                          'coref': self.links.get(v['id'])}
+                          'coref': self.links.get(v['id']), }
                          |v
                      )
                          for  v in self.spans.to_dict(orient='index').values()]
@@ -438,11 +438,13 @@ class EntityGrid:
                            (mentions
                             .dropna(subset=['coref'])
 #                            .pipe(lambda df: print(df) or df)
-                            .assign(coref = lambda df: df.apply(lambda row: [row['coref'][1]]
-                                                                if len(row['coref']) == 2 else None, axis=1))
+                            .assign(coref = lambda df: df.apply(
+                                lambda row: [row['coref'][1]]
+                                if len(row['coref']) == 2 else None, axis=1))
                             .dropna(subset=['coref'])
-                            .assign(id = lambda df: df.apply(lambda row: gen_id(), axis=1))
-#                            .pipe(lambda df: print(df) or df)
+                            .assign(id = lambda df: df.apply(
+                                lambda row: gen_id(), axis=1))
+                            #                            .pipe(lambda df: print(df) or df)
                            )]
                          )
                  .assign(out_link = lambda df:
@@ -461,7 +463,7 @@ class EntityGrid:
                 (mentions
                  .assign(role = lambda df:
                          df.apply(lambda row:
-                                  Linger.role(row) if row['tag']=='nom' else row['out_link'],
+                                  Linger.role(row),
                                   axis=1))
                 )
 
@@ -470,9 +472,7 @@ class EntityGrid:
                 (mentions
                  .assign(form = lambda df:
                          df.apply(lambda row:
-                                  'null'
-                                  if Linger.is_null(row) or row['tag'] == 'pred'
-                                  else 'overt',
+                                  Linger.form(row),
                                   axis=1)
                         )
                 )
@@ -488,6 +488,9 @@ class EntityGrid:
                                   axis=1)
                         )
                 )
+
+    def get_mention_by_id(self, mention_id):
+        return self.mentions.loc[self.mentions.id == mention_id].iloc[0]
 
     def create_gold(self):
         return\
@@ -548,9 +551,10 @@ class Sentence:
     def set_speaker(self, speaker):
         self.speaker=speaker
 
+
 class Mention:
 
-    names = ['id','tag','text','owner','start','end','role','form','coref','out_link']
+    names = ['id','tag','text','owner','start','end','role','form','coref','out_link','in_link','sentence','sentence_id','sentence_text']
 
     def __init__(self, args_dict):
 
@@ -560,6 +564,7 @@ class Mention:
             self.__dict__.update(args_dict)
             self.sentence = self.get_sentence()
             self.sentence_id = self.sentence.id
+            self.sentence_text = self.sentence.text
             self.speaker = self.sentence.speaker
         else:
             logger.error(f"Mention init with {args_dict}")
@@ -567,6 +572,17 @@ class Mention:
     def __repr__(self):
         return f"Mention({self.id},{self.start},{self.end},{self.text})"
 
+    def get_antecedent(self):
+        return\
+                next(
+                    filter(lambda mention: mention.id==self.coref,
+                           self.owner.mentions))
+
+    def sentence_mate(self, mention):
+        return self.sentence_id == mention.sentence_id
+
+    def precedes(self, mention):
+        return self.start > mention.start
 
     def get_sentence(self):
         try:
@@ -581,16 +597,14 @@ class Mention:
 class Linger:
 
     @staticmethod
-    def is_nominative(mention: pd.core.series.Series):
-        return\
-                mention['owner'].text[mention['end']] == ' '
-
-    @staticmethod
-    def is_genitive(mention: pd.core.series.Series):
-        return\
-                bool(
+    def case(mention: pd.core.series.Series):
+        if bool(
                     re.search('n?(u|ü|i|ı)n', mention['owner'].text[mention['end']:mention['end']+4])
-                )
+        ):
+            return 'gen'
+        elif mention['owner'].text[mention['end']] == ' ':
+            return 'nom'
+
 
     @staticmethod
     def is_null(mention: pd.core.series.Series):
@@ -599,12 +613,30 @@ class Linger:
                 mention['tag'] == 'pred'
 
     @staticmethod
-    def role(mention: pd.core.series.Series):
-        if Linger.is_nominative(mention):
-            return 'subj'
-        elif Linger.is_genitive(mention):
-            return 'subj'
+    def antecedent(mention: pd.core.series.Series):
+        return mention['owner'].get_mention_by_id(mention['coref'])
+
+    @staticmethod
+    def form(mention: pd.core.series.Series):
+        if mention['text'] == ' ' or mention['tag'] == 'pred':
+            return 'null'
+        elif mention['tag'] == 'nom' and\
+                mention['out_link'] == 'poss' and \
+                mention['sent'] != Linger.antecedent(mention)['sent']:
+            return 'mull'
         else:
-            return 'obj'
+            return 'overt'
 
-
+    @staticmethod
+    def role(mention: pd.core.series.Series):
+        if mention['tag'] == 'nom':
+            if Linger.case(mention) == 'gen':
+                return 'poss' if mention['in_link'] == 'poss' else 'subj'
+            elif Linger.case(mention) == 'nom':
+                return 'subj'
+            elif mention['text'] == ' ':
+                return 'obj'
+            else:
+                return 'unk'
+        elif mention['tag'] == 'pred':
+                return 'unk'

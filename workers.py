@@ -1,6 +1,7 @@
 from labelbox import Client
 from labelbox.exceptions import ResourceNotFoundError
 import pandas as pd
+import datetime
 
 import os
 import sys
@@ -78,3 +79,39 @@ class LBWorker():
             return self._remote_read_data(project_id)
         else:
             return self._local_read_data(project_id)
+
+    def load_data(self, filename):
+
+        client = Client(self.api_key)
+
+        new_dataset = client.create_dataset(name=filename)
+
+
+        # Create data payload
+        # Use global key, a unique ID to identify an asset throughout Labelbox workflow. Learn more: https://docs.labelbox.com/docs/global-keys
+        # You can add metadata fields to your data rows. Learn more: https://docs.labelbox.com/docs/import-metadata
+        row_data = ""
+        with open(filename, 'r', encoding="utf-8") as inf:
+            row_data = json.load(inf)[0]['row_data']
+
+
+
+        assets = [
+            {
+                "row_data": row_data,
+                "global_key": filename[:-5],
+                "media_type": "TEXT",
+            }
+        ]
+
+        # Bulk add data rows to the dataset
+        task = new_dataset.create_data_rows(assets)
+
+
+        task.wait_till_done()
+        print(task.errors)
+
+
+if __name__=='__main__':
+    from commons import LB_API_KEY, DATAPATH
+    lbw = LBWorker(LB_API_KEY, DATAPATH)
