@@ -356,6 +356,9 @@ class EntityGrid:
         self.links = self.acquire_links()
         self.mentions = self.acquire_mentions()
 
+        # enrich_mentions depends on the existence of self.mentions
+        self.mentions = self.enrich_mentions()
+
     def acquire_sentences(self):
         sentences=\
                 [Sentence(self, *sent)
@@ -399,34 +402,28 @@ class EntityGrid:
 
     def acquire_mentions(self):
         return\
-                self.set_in_links(
-                    self.set_forms(
-                        self.set_roles(
-                            self.expand_mentions(
-                                self.spans_to_mentions()
-                            )
-                        )
-                    )
-                )
+                 [Mention(record)
+                  for record in
+                  self.expand_mentions(
+                      self.spans_to_mentions()
+                  ).to_dict('records')]
+
+    def enrich_mentions(self):
+
+        return\
+                [mention.set_role().set_form().set_in_link()
+                 for mention in
+                 self.mentions ]
 
     def spans_to_mentions(self):
         return\
                 (pd.DataFrame(
-                    [mention.__dict__
-                     for mention in
-                     [Mention(
-                         {'owner':self,
-                          'coref': self.links.get(v['id']), }
+                    [{'owner':self,
+                      'coref': self.links.get(v['id']), }
                          |v
-                     )
-                         for  v in self.spans.to_dict(orient='index').values()]
-                    ]
+                     for  v in self.spans.to_dict(orient='index').values() ]
                 )
-                    .assign(sent = lambda df: df['sentence'].map(lambda x:x.text))
-                    .drop(columns=['sentence'])
-                    .rename(columns={'sentence_id':'sent_id'})
                     .sort_values(by='start')
-#                    .loc[:,['id','tag','text','sent','sent_id','speaker','role','form','coref','owner']]
                 )
 
     def expand_mentions(self, mentions):
@@ -444,7 +441,6 @@ class EntityGrid:
                             .dropna(subset=['coref'])
                             .assign(id = lambda df: df.apply(
                                 lambda row: gen_id(), axis=1))
-                            #                            .pipe(lambda df: print(df) or df)
                            )]
                          )
                  .assign(out_link = lambda df:
@@ -455,42 +451,8 @@ class EntityGrid:
                          df.apply(lambda row:
                                   row['coref'][0][0]
                                   if row['coref'] else None, axis=1))
+                 .rename(columns={'coref':'ant'})
                 )
-
-
-    def set_roles(self, mentions):
-        return\
-                (mentions
-                 .assign(role = lambda df:
-                         df.apply(lambda row:
-                                  Linger.role(row),
-                                  axis=1))
-                )
-
-    def set_forms(self, mentions):
-        return\
-                (mentions
-                 .assign(form = lambda df:
-                         df.apply(lambda row:
-                                  Linger.form(row),
-                                  axis=1)
-                        )
-                )
-
-    def set_in_links(self, mentions):
-        return\
-                (mentions
-                 .assign(in_link = lambda df:
-                         df.apply(lambda row:
-                                  df[df.coref == row['id']]['out_link'].values[0]
-                                  if (df.coref == row['id']).any()
-                                  else None,
-                                  axis=1)
-                        )
-                )
-
-    def get_mention_by_id(self, mention_id):
-        return self.mentions.loc[self.mentions.id == mention_id].iloc[0]
 
     def create_gold(self):
         return\
@@ -509,18 +471,20 @@ class EntityGrid:
                 columns=['id','start','end','text','speaker']
             )
         elif field=='mentions':
-            return self.mentions.loc[:,['id',
-                                        'tag',
-                                        'text',
-                                        'sent',
-                                        'sent_id',
-                                        'speaker',
-                                        'role',
-                                        'form',
-                                        'out_link',
-                                        'in_link',
-                                        'coref',
-                                       ]]
+            return pd.DataFrame([mention.__dict__ for mention in self.mentions],
+                               columns= ['id',
+                                         'tag',
+                                         'text',
+                                         'sentence_id',
+                                         'sentence_text',
+                                         'speaker',
+                                         'role',
+                                         'form',
+                                         'out_link',
+                                         'in_link',
+                                         'ant',
+                                         'pre',
+                                        ]).rename(columns={'sentence_id':'sent_id'})
         elif field=='links':
             return\
                     (pd.DataFrame(
@@ -554,7 +518,7 @@ class Sentence:
 
 class Mention:
 
-    names = ['id','tag','text','owner','start','end','role','form','coref','out_link','in_link','sentence','sentence_id','sentence_text']
+    names = ['id','tag','text','owner','start','end','role','form','ant','pre','out_link','in_link','sentence','sentence_id','sentence_text']
 
     def __init__(self, args_dict):
 
@@ -573,10 +537,13 @@ class Mention:
         return f"Mention({self.id},{self.start},{self.end},{self.text})"
 
     def get_antecedent(self):
-        return\
-                next(
-                    filter(lambda mention: mention.id==self.coref,
-                           self.owner.mentions))
+        try:
+            return\
+                    next(
+                        filter(lambda mention: mention.id==self.ant,
+                               self.owner.mentions))
+        except StopIteration:
+            return None
 
     def sentence_mate(self, mention):
         return self.sentence_id == mention.sentence_id
@@ -594,49 +561,90 @@ class Mention:
             logger.error(f"Could not get sentence for {self} in {self.owner}.")
             return Sentence(self, -1,-1,-1,'ERROR')
 
+    def get_grid_mates(self):
+        return self.owner.mentions
+
+    def set_in_link(self):
+
+        try:
+            precedent =\
+                    next(
+                        filter(lambda mention: mention.ant == self.id,
+                               self.get_grid_mates()))
+        except StopIteration:
+            self.in_link = None
+            self.pre = None
+        else:
+            self.pre = precedent.id
+            self.in_link = precedent.out_link
+
+        return self
+
+    def set_role(self):
+        self.role = Linger.role(self)
+        return self
+
+    def set_form(self):
+        self.form = Linger.form(self)
+        return self
+
+
 class Linger:
 
     @staticmethod
     def case(mention: pd.core.series.Series):
         if bool(
-                    re.search('n?(u|ü|i|ı)n', mention['owner'].text[mention['end']:mention['end']+4])
+            re.search('n?(u|ü|i|ı)n', mention.owner.text[mention.end : mention.end+4])
         ):
             return 'gen'
-        elif mention['owner'].text[mention['end']] == ' ':
+        elif mention.owner.text[mention.end] == ' ':
             return 'nom'
+        else:
+            return 'obj'
 
 
     @staticmethod
     def is_null(mention: pd.core.series.Series):
         return\
-                mention['text'] == ' ' or\
-                mention['tag'] == 'pred'
-
-    @staticmethod
-    def antecedent(mention: pd.core.series.Series):
-        return mention['owner'].get_mention_by_id(mention['coref'])
+                mention.text == ' ' or\
+                mention.tag == 'pred'
 
     @staticmethod
     def form(mention: pd.core.series.Series):
-        if mention['text'] == ' ' or mention['tag'] == 'pred':
-            return 'null'
-        elif mention['tag'] == 'nom' and\
-                mention['out_link'] == 'poss' and \
-                mention['sent'] != Linger.antecedent(mention)['sent']:
-            return 'mull'
-        else:
-            return 'overt'
+        try:
+            if mention.text == ' ' or mention.tag == 'pred':
+                return 'null'
+            elif mention.tag == 'nom' and\
+                    mention.out_link == 'poss' and \
+                    not mention.sentence_mate(mention.get_antecedent()):
+                return 'null'
+            else:
+                return 'overt'
+        except StopIteration:
+            return 'error'
+        except AttributeError:
+            return 'error'
 
     @staticmethod
     def role(mention: pd.core.series.Series):
-        if mention['tag'] == 'nom':
+        if mention.tag == 'nom':
             if Linger.case(mention) == 'gen':
-                return 'poss' if mention['in_link'] == 'poss' else 'subj'
+                return 'poss' if mention.in_link == 'poss' else 'subj'
             elif Linger.case(mention) == 'nom':
                 return 'subj'
-            elif mention['text'] == ' ':
+            elif mention.text == ' ':
                 return 'obj'
             else:
                 return 'unk'
-        elif mention['tag'] == 'pred':
-                return 'unk'
+        elif mention.tag == 'pred':
+            if mention.out_link == 'subj':
+                return 'subj'
+        elif mention.tag == 'exo':
+            match Linger.case(mention):
+                case 'gen':
+                    return 'poss'
+                case 'nom':
+                    return 'subj'
+                case 'obj':
+                    return 'obj'
+
