@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import math
 import os
 import sys
 import re
@@ -46,6 +47,46 @@ class DialogAnnotation:
                         .assign(project_id = lambda df: df['object'].apply(lambda row: row.project_id))
                         )
         return self
+
+    def summarize(self):
+        return\
+                (pd.DataFrame([dialog.__dict__ for dialog in self.dialogs['object'].values])
+                 .assign(**{'#words' : lambda df:
+                         df.apply(lambda row: row['owner'].get_dialog('name',row['name']).get_word_count(),
+                                 axis=1)})
+                 .assign(**{'#mentions' : lambda df:
+                         df.apply(lambda row: row['entity_grid'].get_mention_count(),
+                                 axis=1)})
+                 .assign(**{'#entities' : lambda df:
+                         df.apply(lambda row: len(row['entity_grid'].get_chains()),
+                                 axis=1)})
+                 .assign(**{'mention/entity': lambda df:
+                         df.apply(lambda row: row['#mentions']/row['#entities'],
+                                 axis=1)})
+                 .assign(**{'%null': lambda df:
+                          df.apply(lambda row:
+                                   (row['entity_grid']['mentions']['form'].value_counts(normalize=True) *100)['null'], axis=1)})
+                 .assign(**{'%overt': lambda df:
+                          df.apply(lambda row:
+                                   (row['entity_grid']['mentions']['form'].value_counts(normalize=True) *100)['overt'], axis=1)})
+                 .assign(**{'%subject': lambda df:
+                          df.apply(lambda row:
+                                   (row['entity_grid']['mentions']['role'].value_counts(normalize=True) *100)['subj'], axis=1)})
+                 .assign(**{'%non-subject': lambda df:
+                          df.apply(lambda row:
+                                   (100 - row['%subject']), axis=1)})
+                 .assign(**{'%null-in-subj': lambda df:
+                            df.apply(lambda row:
+                                     (row['entity_grid']['mentions'].loc[lambda x: x['role'] == 'subj']['form'].value_counts(normalize=True) *100)['null'],
+                                     axis=1)})
+                 .assign(**{'%null-in-non-subj': lambda df:
+                            df.apply(lambda row:
+                                     (row['entity_grid']['mentions'].loc[lambda x: x['role'] != 'subj']['form'].value_counts(normalize=True) *100)['null'],
+                                     axis=1)})
+                 .loc[:,['name','labelers','#words','#mentions','#entities','mention/entity','%null','%overt','%subject','%non-subject','%null-in-subj','%null-in-non-subj']]
+                )
+
+
 
 
     def update(self, dialog):
@@ -209,6 +250,9 @@ class Dialog:
         accu = accu.replace('p:','p: ').replace('o:','o: ').replace('\n','\n<br/>')
         return accu
 
+    def get_word_count(self):
+        return len(self.text.split())
+
 class Agreement:
 
     def __init__(self, dialog):
@@ -357,7 +401,36 @@ class EntityGrid:
         self.mentions = self.acquire_mentions()
 
         # enrich_mentions depends on the existence of self.mentions
-        self.mentions = self.enrich_mentions()
+        self.mentions = {m.id:m for m in self.enrich_mentions()}
+        self.coref_classes = self.create_coref_classes()
+        self.chains = [Chain(x) for x in self.coref_classes]
+
+    def create_coref_classes(self):
+
+        mention_ids = {int(i):True for i in self.mentions.keys()}
+
+        ccs = []
+        trial_count = 100
+        while mention_ids and trial_count > 0:
+            for mid in mention_ids.keys():
+                mention = self.get_mention(mid)
+                if mention.is_head():
+                    ccs.append(CorefClass(mention))
+                    mention_ids[mid] = False
+                else:
+                    if any(map(lambda cc: cc.push(mention), ccs)):
+                        mention_ids[mid] = False
+
+            mention_ids = dict(filter(lambda x: x[1], mention_ids.items()))
+            trial_count -= 1
+
+        if mention_ids:
+            logger.warn(f'Could not coref classify {list(mention_ids.keys())} in {self.dialog}')
+
+        return ccs
+
+    def get_mention(self, id):
+        return self.mentions[id]
 
     def acquire_sentences(self):
         sentences=\
@@ -400,20 +473,32 @@ class EntityGrid:
                        dict())
 
 
+    def get_chains(self):
+        return self.chains
+
+    def get_mentions(self):
+        return self.mentions.values()
+
+    def get_mention_count(self):
+        return len(self.get_mentions())
+
     def acquire_mentions(self):
         return\
+                {mention.id:mention
+                 for mention in
                  [Mention(record)
                   for record in
                   self.expand_mentions(
                       self.spans_to_mentions()
                   ).to_dict('records')]
+                }
 
     def enrich_mentions(self):
 
         return\
                 [mention.set_role().set_form().set_in_link()
                  for mention in
-                 self.mentions ]
+                 self.get_mentions() ]
 
     def spans_to_mentions(self):
         return\
@@ -434,7 +519,6 @@ class EntityGrid:
                 (pd.concat([mentions,
                            (mentions
                             .dropna(subset=['coref'])
-#                            .pipe(lambda df: print(df) or df)
                             .assign(coref = lambda df: df.apply(
                                 lambda row: [row['coref'][1]]
                                 if len(row['coref']) == 2 else None, axis=1))
@@ -464,37 +548,47 @@ class EntityGrid:
 
     def __getitem__(self, field):
         """For viewing purposes only"""
-        if field=='sentences':
-            return pd.DataFrame(
-                [sent.__dict__
-                 for sent in self.sentences],
-                columns=['id','start','end','text','speaker']
-            )
-        elif field=='mentions':
-            return pd.DataFrame([mention.__dict__ for mention in self.mentions],
-                               columns= ['id',
-                                         'tag',
-                                         'text',
-                                         'sentence_id',
-                                         'sentence_text',
-                                         'speaker',
-                                         'role',
-                                         'form',
-                                         'out_link',
-                                         'in_link',
-                                         'ant',
-                                         'pre',
-                                        ]).rename(columns={'sentence_id':'sent_id'})
-        elif field=='links':
-            return\
-                    (pd.DataFrame(
-                        [{'id': key, 'links':str(val)}
-                        for key, val in self.links.items()],
-                        columns=['id','links']
-                    )
-                        .loc[:,['id','links']])
-        else:
-            raise ValueError
+
+        match field:
+            case 'sentences':
+                return pd.DataFrame(
+                    [sent.__dict__
+                     for sent in self.sentences],
+                    columns=['id','start','end','text','speaker']
+                )
+            case 'mentions':
+                return pd.DataFrame([mention.__dict__ for mention in self.get_mentions()],
+                                    columns= ['id',
+                                              'tag',
+                                              'text',
+                                              'sentence_id',
+                                              'sentence_text',
+                                              'speaker',
+                                              'role',
+                                              'form',
+                                              'out_link',
+                                              'in_link',
+                                              'ant',
+                                              'pre',
+                                             ]).rename(columns={'sentence_id':'sent_id'})
+            case 'links':
+                return\
+                        (pd.DataFrame(
+                            [{'id': key, 'links':str(val)}
+                             for key, val in self.links.items()],
+                            columns=['id','links']
+                        )
+                            .loc[:,['id','links']])
+            case 'coref_classes':
+                return\
+                        '\n\n'.join([x.__repr__() for x in self.coref_classes])
+            case 'chains':
+                return\
+                        (pd.DataFrame([c.__dict__ for c in self.chains],
+                                      columns=['sequence','length','roles','forms']
+                                     ))
+            case _:
+                raise ValueError
 
 class Sentence:
 
@@ -533,15 +627,27 @@ class Mention:
         else:
             logger.error(f"Mention init with {args_dict}")
 
+        self._fix_types()
+
+    def _fix_types(self):
+
+        self.id = int(self.id)
+
+        for field in ['pre','ant']:
+            if self.__dict__[field] is None or math.isnan(self.__dict__[field]):
+                self.__dict__[field] = None
+            else:
+                self.__dict__[field] = int(self.__dict__[field])
+
     def __repr__(self):
-        return f"Mention({self.id},{self.start},{self.end},{self.text})"
+        return f"Mention({self.id},{self.start},{self.end},{self.text},{self.owner.dialog.name})"
 
     def get_antecedent(self):
         try:
             return\
                     next(
                         filter(lambda mention: mention.id==self.ant,
-                               self.owner.mentions))
+                               self.owner.get_mentions()))
         except StopIteration:
             return None
 
@@ -550,6 +656,9 @@ class Mention:
 
     def precedes(self, mention):
         return self.start > mention.start
+
+    def is_head(self):
+        return not isinstance(self.ant, int)
 
     def get_sentence(self):
         try:
@@ -562,7 +671,7 @@ class Mention:
             return Sentence(self, -1,-1,-1,'ERROR')
 
     def get_grid_mates(self):
-        return self.owner.mentions
+        return self.owner.get_mentions()
 
     def set_in_link(self):
 
@@ -648,3 +757,50 @@ class Linger:
                 case 'obj':
                     return 'obj'
 
+class CorefClass:
+
+    def __init__(self, mention):
+
+        assert(mention.is_head())
+        # data is a dict mapping mention id to mention
+        self.mentions = {mention.id:mention}
+
+    def hosts(self, mention):
+        "tell whether the mention has an antecedent in this class"
+        value = list(filter(lambda m: m.id == mention.ant,
+                           self.mentions.values()))
+
+        return bool(value)
+
+
+    def push(self, mention):
+        "push the mention if it fits in"
+        if self.hosts(mention):
+            self.mentions[mention.id] = mention
+            return True
+        else:
+            return False
+
+    def __repr__(self):
+        return f"CorefClass({list(self.mentions.keys())})"
+
+
+class Chain:
+
+    def __init__(self, corefclass):
+
+        self.corefclass = corefclass
+        self.mentions = self.sort_mentions()
+        self.sequence = [x.id for x in self.mentions]
+        self.length = len(self.mentions)
+        assert(self.length == len(corefclass.mentions.values()))
+        self.roles = [x.role for x in self.mentions]
+        self.forms = [x.form for x in self.mentions]
+        self.speakers= [x.speaker for x in self.mentions]
+        self.root = self.get_root()
+
+    def sort_mentions(self):
+        return sorted(self.corefclass.mentions.values(), key=lambda x: x.id)
+
+    def get_root(self):
+        return next(filter(lambda x: x.is_head(), self.mentions))

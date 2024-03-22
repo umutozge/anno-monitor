@@ -21,9 +21,13 @@ logger = logging.getLogger(__name__)
 
 class Monitor():
 
-    def __init__(self, dialog_annotation):
+    def __init__(self):
 
-        self.da = dialog_annotation
+        if 'da' in st.session_state:
+            self.da = st.session_state.da
+        else:
+            self.da = DialogAnnotation()
+            st.session_state.da = self.da
 
         st.set_page_config(page_title="Dialog Annotation",
                        layout="wide",
@@ -42,6 +46,9 @@ class Monitor():
 
         st.sidebar.divider()
 
+        st.sidebar.button("overview",
+                      help="summary of the entire data",
+                      on_click=self.display_overview)
         st.sidebar.button("view annotation",
                       help="annotations of the last viewed dialog",
                       on_click=self.display_annotation)
@@ -50,7 +57,7 @@ class Monitor():
                       on_click=self.display_analysis)
         st.sidebar.button("sync",
                       help="sync with labelbox",
-                      on_click=self.update_dialog)
+                      on_click=self.sync)
 
 
     def display_df(self, caption, df, hide_index=True):
@@ -58,10 +65,12 @@ class Monitor():
         st.markdown(caption(df))
         st.dataframe(df, hide_index=hide_index)
 
-    def update_dialog(self):
+    def sync(self):
 
         with st.spinner('Updating data, this may take a while...'):
             self.da.update_all()
+            self.da = DialogAnnotation()
+            st.session_state.da = self.da
 
     def display_analysis(self):
 
@@ -71,8 +80,16 @@ class Monitor():
 
 
             self.display_df(lambda x:'Mentions:', dialog.entity_grid['mentions'])
+            self.display_df(lambda x:'Chains:', dialog.entity_grid['chains'])
+            st.write(dialog.entity_grid['coref_classes'])
             self.display_df(lambda x:'Links:', dialog.entity_grid['links'])
             self.display_df(lambda x:'Sentences:', dialog.entity_grid['sentences'])
+
+
+    def display_overview(self):
+
+        self.display_df(lambda x: """Overview:""", self.da.summarize())
+
 
 
     def display_annotation(self):
@@ -108,5 +125,5 @@ class Monitor():
 
 if __name__ == '__main__':
 
-    logger.info('\n\n***A fresh start!***\n\n')
-    Monitor(DialogAnnotation())
+    logger.info('\n\n***Streamlit restart***\n\n')
+    Monitor()
