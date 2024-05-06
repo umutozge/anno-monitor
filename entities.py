@@ -6,6 +6,7 @@ import sys
 import re
 import json
 import time
+import copy
 
 from functools import reduce
 
@@ -87,8 +88,6 @@ class DialogAnnotation:
                 )
 
 
-
-
     def update(self, dialog):
         self.data_reader.read_data(dialog.project_id, update=True)
         self.load_projects()
@@ -104,6 +103,12 @@ class DialogAnnotation:
 
     def __bool__(self):
         return bool(len(self))
+
+    def write_grids(self):
+        self.load_projects()
+        with open('grids.json', 'w', encoding="utf-8") as ouf:
+            ouf.write(json.dumps([dialog.entity_grid.to_dict() for dialog in self.dialogs.loc[:, "object"]], indent=4, ensure_ascii=False))
+
 
 class Dialog:
 
@@ -542,6 +547,16 @@ class EntityGrid:
         return\
         self.dialog.agreement.results['matched']['spans'], self.dialog.agreement.results['matched']['relations']
 
+    def to_dict(self):
+
+        data = {}
+        data["dialog"] = self.dialog.name
+        data["mentions"] = [x.to_dict() for x in self.mentions.values()]
+        data["sentences"] = [x.to_dict() for x in self.sentences]
+        data["chains"] = [x.to_dict() for x in self.chains]
+        data["text"] = self.text
+        return data
+
     def __repr__(self):
         return\
                 f"EntityGrid({self.dialog.name})"
@@ -585,7 +600,7 @@ class EntityGrid:
             case 'chains':
                 return\
                         (pd.DataFrame([c.__dict__ for c in self.chains],
-                                      columns=['sequence','length','roles','forms']
+                                      columns=['root','sequence','length','roles','forms']
                                      ))
             case _:
                 raise ValueError
@@ -608,6 +623,11 @@ class Sentence:
 
     def set_speaker(self, speaker):
         self.speaker=speaker
+
+    def to_dict(self):
+        data = copy.copy(self.__dict__)
+        data.pop('owner')
+        return data
 
 
 class Mention:
@@ -697,6 +717,13 @@ class Mention:
         self.form = Linger.form(self)
         return self
 
+    def to_dict(self):
+        data = copy.copy(self.__dict__)
+        data.pop('owner')
+        data.pop('sentence')
+        data.pop('sentence_text')
+        return data
+
 
 class Linger:
 
@@ -730,9 +757,9 @@ class Linger:
             else:
                 return 'overt'
         except StopIteration:
-            return 'error'
+            return 'iter-error'
         except AttributeError:
-            return 'error'
+            return 'null'
 
     @staticmethod
     def role(mention: pd.core.series.Series):
@@ -743,11 +770,17 @@ class Linger:
                 return 'subj'
             elif mention.text == ' ':
                 return 'obj'
-            else:
-                return 'unk'
+            elif Linger.case(mention) == 'obj':
+                return 'obj'
         elif mention.tag == 'pred':
             if mention.out_link == 'subj':
                 return 'subj'
+            elif mention.out_link == 's_subj':
+                return 's_subj'
+            else:
+                #print(mention.out_link)
+                #print(mention)
+                return 'unk'
         elif mention.tag == 'exo':
             match Linger.case(mention):
                 case 'gen':
@@ -791,16 +824,26 @@ class Chain:
 
         self.corefclass = corefclass
         self.mentions = self.sort_mentions()
+        self.root = self.get_root()
+        self.mentions = list(filter(lambda x: not x.is_head(), self.mentions))
         self.sequence = [x.id for x in self.mentions]
         self.length = len(self.mentions)
-        assert(self.length == len(corefclass.mentions.values()))
+#        assert(self.length == len(corefclass.mentions.values()))
         self.roles = [x.role for x in self.mentions]
         self.forms = [x.form for x in self.mentions]
-        self.speakers= [x.speaker for x in self.mentions]
-        self.root = self.get_root()
+        self.speakers = [x.speaker for x in self.mentions]
 
     def sort_mentions(self):
         return sorted(self.corefclass.mentions.values(), key=lambda x: x.id)
 
     def get_root(self):
         return next(filter(lambda x: x.is_head(), self.mentions))
+
+    def to_dict(self):
+        return\
+        {"root":self.root.id,
+         "corefs":  [x.id for x in
+                     list(filter(lambda x: isinstance(x.ant, int), self.mentions))
+                    ]}
+
+

@@ -58,12 +58,18 @@ class Monitor():
         st.sidebar.button("sync",
                       help="sync with labelbox",
                       on_click=self.sync)
+        st.sidebar.button("dump grids",
+                      help="write entity grids to disk",
+                      on_click=self.dump_grids)
 
 
     def display_df(self, caption, df, hide_index=True):
 
         st.markdown(caption(df))
         st.dataframe(df, hide_index=hide_index)
+
+    def dump_grids(self):
+        self.da.write_grids()
 
     def sync(self):
 
