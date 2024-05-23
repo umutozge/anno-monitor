@@ -8,10 +8,14 @@ import json
 import time
 import copy
 
+import random
+
+
 from functools import reduce
 
 from commons import USERS, LB_API_KEY, DATAPATH, LB_PROJECTS, make_color_picker, convert_link_tag, make_counter, shrink_space
 from workers import LBWorker
+
 
 import logging
 logging.basicConfig(
@@ -22,6 +26,11 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+
+
+COLOR = make_color_picker()
+
+
 
 class DialogAnnotation:
 
@@ -221,7 +230,6 @@ class Dialog:
 
     def generate_indexed_text(self):
 
-        color = make_color_picker()
         text = self.text
         start_end = (self.spans
                      .drop_duplicates(subset=['id'], keep='first')
@@ -245,7 +253,7 @@ class Dialog:
                 last_edit_point = start_or_end[0]
             else:
                 accu += text[last_edit_point:start_or_end[0]]
-                accu += f':{color()}['
+                accu += f':{COLOR()}['
                 last_edit_point = start_or_end[0]
 
 
@@ -391,6 +399,9 @@ class Agreement:
                 .reset_index(drop=True)
                )
 
+    def _compute_f_score(self):
+        pass
+
 class EntityGrid:
 
     from trtokenizer.tr_tokenizer import SentenceTokenizer
@@ -468,7 +479,6 @@ class EntityGrid:
         """Returns a dict of the form:
             {from_id: [(to_id, tag),...]}
         """
-
         return\
                 reduce(lambda dic, tup:
                        dic|{tup[0]:[tup[1]]} if tup[0] not in dic.keys()
@@ -532,6 +542,7 @@ class EntityGrid:
                                 lambda row: gen_id(), axis=1))
                            )]
                          )
+               #  .pipe(lambda df: print(df.to_string()) or df)
                  .assign(out_link = lambda df:
                          df.apply(lambda row:
                                   convert_link_tag(row['coref'][0][1])
@@ -543,9 +554,18 @@ class EntityGrid:
                  .rename(columns={'coref':'ant'})
                 )
 
-    def create_gold(self):
-        return\
-        self.dialog.agreement.results['matched']['spans'], self.dialog.agreement.results['matched']['relations']
+    def create_gold(self, mode='random'):
+        if mode=='strict':
+            spans = self.dialog.agreement.results['matched']['spans']
+            relations = self.dialog.agreement.results['matched']['relations']
+            return spans, relations
+        elif mode=='random':
+            labeler = self.dialog.labelers[round(random.random())]
+            spans = self.dialog.spans[self.dialog.spans.labeler == labeler]
+            relations = self.dialog.relations[self.dialog.relations.labeler==labeler]
+            logger.info(f'Picked {labeler} at random mode in dialog {self.dialog.name}.')
+            return spans.drop(['labeler'],axis=1), relations.drop(['labeler'],axis=1)
+
 
     def to_dict(self):
 
@@ -720,8 +740,8 @@ class Mention:
     def to_dict(self):
         data = copy.copy(self.__dict__)
         data.pop('owner')
-        data.pop('sentence')
         data.pop('sentence_text')
+        data['sentence'] = data['sentence'].to_dict()
         return data
 
 
@@ -819,6 +839,7 @@ class CorefClass:
 
 
 class Chain:
+
 
     def __init__(self, corefclass):
 

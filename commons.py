@@ -63,11 +63,14 @@ def make_counter(add_on):
 
 
 def convert_link_tag(inp):
-    dic = (first := {k:v for k,v in enumerate(LINK_TAGS)}) | {v:k for k, v in first.items()}
-    return dic[inp]
+    try:
+        return LINK_TAG_DICT[inp]
+    except KeyError:
+        return 5
 
 
 LINK_TAGS = ['subj','s_subj','obj','s_obj','poss','coref']
+LINK_TAG_DICT = (first := {k:v for k,v in enumerate(LINK_TAGS)}) | {v:k for k, v in first.items()}
 
 USERS = focus_on(USERS,'name')
 

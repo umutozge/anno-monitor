@@ -4,7 +4,6 @@ import json
 import pandas as pd
 import streamlit as st
 
-
 from commons import LB_PROJECTS
 from entities import DialogAnnotation
 
@@ -90,7 +89,6 @@ class Monitor():
             st.write(dialog.entity_grid['coref_classes'])
             self.display_df(lambda x:'Links:', dialog.entity_grid['links'])
             self.display_df(lambda x:'Sentences:', dialog.entity_grid['sentences'])
-
 
     def display_overview(self):
 
