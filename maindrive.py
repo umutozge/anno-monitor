@@ -61,7 +61,6 @@ class Monitor():
                       help="write entity grids to disk",
                       on_click=self.dump_grids)
 
-
     def display_df(self, caption, df, hide_index=True):
 
         st.markdown(caption(df))
@@ -92,9 +91,9 @@ class Monitor():
 
     def display_overview(self):
 
-        self.display_df(lambda x: """Overview:""", self.da.summarize())
-
-
+        table, description = self.da.summarize()
+        self.display_df(lambda x: """Overview:""", table)
+        self.display_df(lambda x: """Description:""", description, hide_index=False)
 
     def display_annotation(self):
 

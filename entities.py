@@ -59,10 +59,13 @@ class DialogAnnotation:
         return self
 
     def summarize(self):
-        return\
+        table=\
                 (pd.DataFrame([dialog.__dict__ for dialog in self.dialogs['object'].values])
                  .assign(**{'#words' : lambda df:
                          df.apply(lambda row: row['owner'].get_dialog('name',row['name']).get_word_count(),
+                                 axis=1)})
+                 .assign(**{'#sentences' : lambda df:
+                         df.apply(lambda row: row['entity_grid'].get_sentence_count(),
                                  axis=1)})
                  .assign(**{'#mentions' : lambda df:
                          df.apply(lambda row: row['entity_grid'].get_mention_count(),
@@ -93,9 +96,10 @@ class DialogAnnotation:
                             df.apply(lambda row:
                                      (row['entity_grid']['mentions'].loc[lambda x: x['role'] != 'subj']['form'].value_counts(normalize=True) *100)['null'],
                                      axis=1)})
-                 .loc[:,['name','labelers','#words','#mentions','#entities','mention/entity','%null','%overt','%subject','%non-subject','%null-in-subj','%null-in-non-subj']]
+                 .loc[:,['name','labelers','#words','#sentences','#mentions','#entities','mention/entity','%null','%overt','%subject','%non-subject','%null-in-subj','%null-in-non-subj']]
                 )
-
+        
+        return table, table.describe()
 
     def update(self, dialog):
         self.data_reader.read_data(dialog.project_id, update=True)
@@ -117,7 +121,6 @@ class DialogAnnotation:
         self.load_projects()
         with open('grids.json', 'w', encoding="utf-8") as ouf:
             ouf.write(json.dumps([dialog.entity_grid.to_dict() for dialog in self.dialogs.loc[:, "object"]], indent=4, ensure_ascii=False))
-
 
 class Dialog:
 
@@ -487,7 +490,6 @@ class EntityGrid:
                         for rel in self.relations.to_dict(orient='index').values()],
                        dict())
 
-
     def get_chains(self):
         return self.chains
 
@@ -496,6 +498,9 @@ class EntityGrid:
 
     def get_mention_count(self):
         return len(self.get_mentions())
+
+    def get_sentence_count(self):
+        return len(self.sentences)
 
     def acquire_mentions(self):
         return\
@@ -565,7 +570,6 @@ class EntityGrid:
             relations = self.dialog.relations[self.dialog.relations.labeler==labeler]
             logger.info(f'Picked {labeler} at random mode in dialog {self.dialog.name}.')
             return spans.drop(['labeler'],axis=1), relations.drop(['labeler'],axis=1)
-
 
     def to_dict(self):
 
@@ -648,7 +652,6 @@ class Sentence:
         data = copy.copy(self.__dict__)
         data.pop('owner')
         return data
-
 
 class Mention:
 
@@ -743,7 +746,6 @@ class Mention:
         data.pop('sentence_text')
         data['sentence'] = data['sentence'].to_dict()
         return data
-
 
 class Linger:
 
