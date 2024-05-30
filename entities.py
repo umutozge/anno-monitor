@@ -290,9 +290,23 @@ class Agreement:
                 'relations': self._compute_unmatched_relations()},
             'disagreed': {
                 'spans': self._compute_disagreed_spans(),
-                'relations': self._compute_disagreed_relations()}}
+                'relations': self._compute_disagreed_relations()} }
 
         self.summary = self._compute_summary()
+        self.write_to_disk()
+
+
+    def write_to_disk(self):
+        result = {'spans': [json.loads(span.to_json(orient='records')) for span in self.spans],
+                  'relations': [json.loads(relation.to_json(orient='records')) for relation in self.relations],
+                  'mspans': json.loads(self.results['matched']['spans'].to_json(orient='records')),
+                  'uspans': json.loads(self.results['unmatched']['spans'].to_json(orient='records')),
+                  'mrels':  json.loads(self.results['matched']['relations'].to_json(orient='records')),
+                  'urels':  json.loads(self.results['unmatched']['relations'].to_json(orient='records')),
+                  'dspans':  json.loads(self.results['disagreed']['spans'].to_json(orient='records')),
+                  'drels':  json.loads(self.results['disagreed']['relations'].to_json(orient='records')) }
+        with open(f'agrdata/{self.dialog.name}.json', 'w', encoding='utf-8') as ouf:
+            ouf.write(json.dumps(result, indent=4, ensure_ascii=False))
 
     def __bool__(self):
         return bool(self.results)
@@ -401,9 +415,6 @@ class Agreement:
                 .pipe(lambda df: df.drop(columns=[column for column in df.columns if '_' in column and not column.startswith('tag')]))
                 .reset_index(drop=True)
                )
-
-    def _compute_f_score(self):
-        pass
 
 class EntityGrid:
 
