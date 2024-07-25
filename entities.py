@@ -10,12 +10,10 @@ import copy
 
 import random
 
-
 from functools import reduce
 
 from commons import USERS, LB_API_KEY, DATAPATH, LB_PROJECTS, make_color_picker, convert_link_tag, make_counter, shrink_space
 from workers import LBWorker
-
 
 import logging
 logging.basicConfig(
@@ -27,10 +25,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 COLOR = make_color_picker()
-
-
 
 class DialogAnnotation:
 
@@ -92,6 +87,9 @@ class DialogAnnotation:
                             df.apply(lambda row:
                                      (row['entity_grid']['mentions'].loc[lambda x: x['role'] == 'subj']['form'].value_counts(normalize=True) *100)['null'],
                                      axis=1)})
+#                 .pipe(lambda df: print(df.apply(lambda row:
+#                                     [row['entity_grid']['mentions'].loc[lambda x: x['role'] != 'subj']['form'].unique(),row['entity_grid'].dialog],
+#                                     axis=1)) or df)
                  .assign(**{'%null-in-non-subj': lambda df:
                             df.apply(lambda row:
                                      (row['entity_grid']['mentions'].loc[lambda x: x['role'] != 'subj']['form'].value_counts(normalize=True) *100)['null'],
@@ -295,10 +293,9 @@ class Agreement:
         self.summary = self._compute_summary()
         self.write_to_disk()
 
-
     def write_to_disk(self):
         result = {'spans': [json.loads(span.to_json(orient='records')) for span in self.spans],
-                  'relations': [json.loads(relation.to_json(orient='records')) for relation in self.relations],
+                  'rels': [json.loads(relation.to_json(orient='records')) for relation in self.relations],
                   'mspans': json.loads(self.results['matched']['spans'].to_json(orient='records')),
                   'uspans': json.loads(self.results['unmatched']['spans'].to_json(orient='records')),
                   'mrels':  json.loads(self.results['matched']['relations'].to_json(orient='records')),
@@ -327,7 +324,6 @@ class Agreement:
              relations_p = lambda df: df.apply(lambda row: f"{round(row['relations']/df.at['total','relations'] * 100)}%", axis=1))
             .pipe(lambda df: df.iloc[:,[0,2,1,3]])
         )
-
 
     def _compute_matched_relations(self):
 
@@ -424,7 +420,7 @@ class EntityGrid:
     def __init__(self, dialog):
 
         self.dialog = dialog
-        self.spans, self.relations = self.create_gold()
+        self.spans, self.relations = self.create_gold(mode='length')
         self.text = shrink_space(self.dialog.text)
         self.sentences = self.acquire_sentences()
         self.links = self.acquire_links()
@@ -575,6 +571,12 @@ class EntityGrid:
             spans = self.dialog.agreement.results['matched']['spans']
             relations = self.dialog.agreement.results['matched']['relations']
             return spans, relations
+        elif mode=='length':
+            winner=max(self.dialog.labelers, key=lambda x: len(self.dialog.spans[self.dialog.spans.labeler==x]))
+            spans = self.dialog.spans[self.dialog.spans.labeler==winner] 
+            relations = self.dialog.relations[self.dialog.relations.labeler==winner]
+            logger.info(f'Picked {winner} by length mode in dialog {self.dialog.name}.')
+            return spans.drop(['labeler'],axis=1), relations.drop(['labeler'],axis=1)
         elif mode=='random':
             labeler = self.dialog.labelers[round(random.random())]
             spans = self.dialog.spans[self.dialog.spans.labeler == labeler]
@@ -850,7 +852,6 @@ class CorefClass:
     def __repr__(self):
         return f"CorefClass({list(self.mentions.keys())})"
 
-
 class Chain:
 
 
@@ -879,5 +880,3 @@ class Chain:
          "corefs":  [x.id for x in
                      list(filter(lambda x: isinstance(x.ant, int), self.mentions))
                     ]}
-
-
