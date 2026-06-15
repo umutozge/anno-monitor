@@ -414,8 +414,11 @@ class Agreement:
 
 class EntityGrid:
 
-    from trtokenizer.tr_tokenizer import SentenceTokenizer
-    sentence_tokenizer=SentenceTokenizer()
+#     from trtokenizer.tr_tokenizer import SentenceTokenizer
+#     sentence_tokenizer=SentenceTokenizer()
+
+#     from zemberek import TurkishSentenceExtractor
+#     sentence_tokenizer = TurkishSentenceExtractor()
 
     def __init__(self, dialog):
 
@@ -458,6 +461,11 @@ class EntityGrid:
     def get_mention(self, id):
         return self.mentions[id]
 
+    def sentence_tokenizer(self, text):
+        pattern = r'(?<=[.!?…#;])\s*'
+        sentences = re.split(pattern, text)
+        return sentences
+
     def acquire_sentences(self):
         sentences=\
                 [Sentence(self, *sent)
@@ -472,7 +480,7 @@ class EntityGrid:
                                                 if x == -1 else x) (self.text.find(sent, result[-1][1]))
                                                +len(sent),
                                                sent)],
-                                    self.sentence_tokenizer.tokenize(self.text),
+                                    self.sentence_tokenizer(self.text),
                                     [(0,0,'')])[1:])))]
 
         current = 'anchor'
@@ -583,6 +591,7 @@ class EntityGrid:
             relations = self.dialog.relations[self.dialog.relations.labeler==labeler]
             logger.info(f'Picked {labeler} at random mode in dialog {self.dialog.name}.')
             return spans.drop(['labeler'],axis=1), relations.drop(['labeler'],axis=1)
+        return spans, relations
 
     def to_dict(self):
 
@@ -773,7 +782,6 @@ class Linger:
         else:
             return 'obj'
 
-
     @staticmethod
     def is_null(mention: pd.core.series.Series):
         return\
@@ -787,7 +795,7 @@ class Linger:
                 return 'null'
             elif mention.tag == 'nom' and\
                     mention.out_link == 'poss' and \
-                    not mention.sentence_mate(mention.get_antecedent()):
+                    (not mention.sentence_mate(mention.get_antecedent()) or Linger.case(mention.get_antecedent()) != 'gen'):
                 return 'null'
             else:
                 return 'overt'
@@ -800,7 +808,7 @@ class Linger:
     def role(mention: pd.core.series.Series):
         if mention.tag == 'nom':
             if Linger.case(mention) == 'gen':
-                return 'poss' if mention.in_link == 'poss' else 'subj'
+                return 'poss' if mention.in_link == 'poss' else 's_subj'
             elif Linger.case(mention) == 'nom':
                 return 'subj'
             elif mention.text == ' ':

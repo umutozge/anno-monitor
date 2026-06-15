@@ -34,7 +34,6 @@ class Monitor():
 
         st.session_state.dialog_names = sorted([dialog.name for dialog in self.da.dialogs['object'].to_list()])
 
-        st.sidebar.title('DEVELOPMENT VERSION')
         st.sidebar.title('Dialogs')
         st.sidebar.selectbox("Select a dialog",
                      key="dialog_name",
@@ -54,9 +53,9 @@ class Monitor():
         st.sidebar.button("view analysis",
                       help="analysis of the last viewed dialog",
                       on_click=self.display_analysis)
-        st.sidebar.button("sync",
-                      help="sync with labelbox",
-                      on_click=self.sync)
+#        st.sidebar.button("sync",
+#                      help="sync with labelbox",
+#                      on_click=self.sync)
         st.sidebar.button("dump grids",
                       help="write entity grids to disk",
                       on_click=self.dump_grids)

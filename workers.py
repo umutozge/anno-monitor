@@ -1,5 +1,5 @@
 from labelbox import Client
-from labelbox.exceptions import ResourceNotFoundError
+# from labelbox.exceptions import ResourceNotFoundError
 import pandas as pd
 import datetime
 
@@ -33,7 +33,7 @@ class LBWorker():
 
         try:
             project = client.get_project(project_id)
-        except ResourceNotFoundError as e:
+        except e:
             logger.error(e)
             return None
 
